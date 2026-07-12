@@ -1,7 +1,6 @@
-"""Authentication endpoints: register, login, refresh, current user."""
+﻿"""Authentication endpoints: register, login, refresh, current user."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
@@ -16,7 +15,7 @@ from app.core.security import (
 from app.crud.user import create_user, get_user_by_email
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import RefreshRequest, Token, UserCreate, UserRead
+from app.schemas.user import LoginRequest, RefreshRequest, Token, UserCreate, UserRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -25,33 +24,19 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)) -> User:
     existing = await get_user_by_email(db, user_in.email)
     if existing is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A user with this email already exists",
-        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with this email already exists")
     return await create_user(db, user_in)
 
 
 @router.post("/login", response_model=Token)
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db),
-) -> Token:
-    user = await get_user_by_email(db, form_data.username)
-    if user is None or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> Token:
+    user = await get_user_by_email(db, body.email)
+    if user is None or not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password", headers={"WWW-Authenticate": "Bearer"})
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user")
-
     subject = str(user.id)
-    return Token(
-        access_token=create_access_token(subject),
-        refresh_token=create_refresh_token(subject),
-    )
+    return Token(access_token=create_access_token(subject), refresh_token=create_refresh_token(subject))
 
 
 @router.post("/refresh", response_model=Token)
@@ -59,16 +44,9 @@ async def refresh(body: RefreshRequest) -> Token:
     try:
         payload = decode_token(body.refresh_token, expected_type=TokenType.REFRESH)
     except InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
-
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
     subject = payload["sub"]
-    return Token(
-        access_token=create_access_token(subject),
-        refresh_token=create_refresh_token(subject),
-    )
+    return Token(access_token=create_access_token(subject), refresh_token=create_refresh_token(subject))
 
 
 @router.get("/me", response_model=UserRead)
