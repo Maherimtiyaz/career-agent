@@ -1,4 +1,4 @@
-services:
+﻿services:
   db:
     image: postgres:16
     container_name: career_agent_postgres
@@ -46,6 +46,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
       - ./backend/alembic.ini:/app/alembic.ini
+      - ./backend/data:/app/data
 
   frontend:
     build: ./frontend

@@ -1,0 +1,17 @@
+Resource Type,Country/Region,Portal/Website Name,Primary Focus,Best For Finding,Notes,Direct Link
+Job Board,Japan,Japan Dev,Tech jobs in English,Internships at Japanese tech companies,"Curated list of English-friendly tech companies in Japan",https://japan.dev
+Job Board,Japan,CareerCross,General jobs,Traditional Japanese companies open to internationals,"Has English interface, some internships listed",https://www.careercross.com
+Job Board,Germany,Make it in Germany,Official German portal,Internships with visa information,"Government portal, reliable but formal",https://www.make-it-in-germany.com
+Job Board,UAE/GCC,Bayt,Middle East jobs,Internships across UAE, Saudi, Qatar,"Largest job board in MENA, use 'fresh graduate' filter",https://www.bayt.com
+Job Board,UAE/GCC,Gulftalent,GCC region,Finance and tech internships,"Strong in UAE/Dubai opportunities",https://www.gulftalent.com
+Job Board,Hong Kong,JobsDB,Hong Kong market,Local internships,"Dominant HK job board, some English listings",https://hk.jobsdb.com
+Job Board,Asia,Startup Jobs Asia,Asian startups,Startup internships across Asia,"Good for early-stage companies",https://www.startupjobs.asia
+University Portal,Global,University Career Portals,Academic opportunities,Research programs, visiting student positions,"Search: 'career portal site:.ac.ae' for UAE universities",N/A
+Government Portal,Portugal,Portugal Startups,Portuguese ecosystem,Tech startups and scaleups,"Good for Lisbon/Porto opportunities",https://www.portugalstartups.com/jobs
+Chamber Portal,Netherlands,NICC,Netherlands-India connections,Events and opportunities,"Networking-focused, check events for opportunities",https://nicc.nl
+Government Agency,Poland,Polish Investment and Trade Agency,Polish business landscape,Company directories and opportunities,"Indirect source - find companies then check their sites",https://www.paih.gov.pl
+Accelerator,Chile,Start-Up Chile,Chilean startup ecosystem,Startup internships and roles,"Spanish not always required in tech roles",https://startupchile.org
+Government Board,Rwanda,Rwanda Development Board,Rwandan digital transformation,Training and internship programs,"Africa-focused digital opportunities",https://rdb.rw
+Digital Program,Estonia,Estonia e-Residency,EU digital society,Events and community,"Unique digital nomad/tech community",https://e-resident.gov.ee
+Visa Portal,Global,Startup Visa Countries,Startup visas,Internships with potential visa path,"Research countries offering startup/innovation visas",N/A
+LinkedIn Strategy,Global,LinkedIn Advanced Search,All opportunities,Unadvertised roles,"Use filters: Entry level, internship, specific countries",https://linkedin.com/jobs
