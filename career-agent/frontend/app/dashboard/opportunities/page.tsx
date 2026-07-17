@@ -1,105 +1,124 @@
 ﻿"use client";
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import type { Opportunity } from "@/types";
 
 export default function OpportunitiesPage() {
+  const qc = useQueryClient();
   const [search, setSearch] = useState("");
-  const [remote, setRemote] = useState<boolean | undefined>(undefined);
   const [source, setSource] = useState("");
   const [page, setPage] = useState(0);
+  const [saving, setSaving] = useState<string | null>(null);
   const limit = 20;
 
   const { data, isLoading } = useQuery({
-    queryKey: ["opportunities", search, remote, source, page],
+    queryKey: ["opportunities", search, source, page],
     queryFn: async () => {
-      const params = new URLSearchParams({ limit: String(limit), skip: String(page * limit) });
-      if (search) params.set("search", search);
-      if (remote !== undefined) params.set("is_remote", String(remote));
-      if (source) params.set("source", source);
-      const res = await api.get<Opportunity[]>("/opportunities?" + params.toString());
-      return res.data;
+      const p = new URLSearchParams({ limit: String(limit), skip: String(page * limit) });
+      if (search) p.set("search", search);
+      if (source) p.set("source", source);
+      const r = await api.get<Opportunity[]>("/opportunities?" + p.toString());
+      return r.data;
     },
   });
 
+  const applyMutation = useMutation({
+    mutationFn: ({ opp, status }: { opp: Opportunity; status: string }) =>
+      api.post("/applications", { company: opp.organization, role: opp.title, job_link: opp.url, status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["applications"] }),
+  });
+
+  async function handleAction(opp: Opportunity, status: string) {
+    setSaving(opp.id + status);
+    try { await applyMutation.mutateAsync({ opp, status }); }
+    catch { /* already tracked */ }
+    finally { setSaving(null); }
+  }
+
+  const tagBadge = (tag: string) => (
+    <span key={tag} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: "rgba(255,255,255,0.06)", color: "var(--text-3)", border: "1px solid var(--border)" }}>{tag}</span>
+  );
+
   return (
-    <div className="p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Opportunities</h1>
-        <p className="text-sm text-[hsl(var(--muted-foreground))] mt-1">Browse and search all available positions</p>
+    <div style={{ padding: "32px 40px" }}>
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>Opportunities</h1>
+        <p style={{ color: "var(--text-2)", fontSize: 13, marginTop: 4 }}>Browse and apply to 2000+ remote positions</p>
       </div>
 
-      <div className="flex gap-3 mb-6 flex-wrap">
-        <input
-          value={search} onChange={e => { setSearch(e.target.value); setPage(0); }}
-          placeholder="Search by title or company..."
-          className="flex-1 min-w-60 px-3 py-2 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]"
-        />
-        <select
-          value={source} onChange={e => { setSource(e.target.value); setPage(0); }}
-          className="px-3 py-2 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm focus:outline-none"
-        >
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} placeholder="Search roles, companies..."
+          style={{ flex: 1, padding: "9px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-2)", color: "var(--text)", fontSize: 13, outline: "none" }}
+          onFocus={e => (e.target as HTMLInputElement).style.borderColor = "var(--primary)"}
+          onBlur={e => (e.target as HTMLInputElement).style.borderColor = "var(--border)"} />
+        <select value={source} onChange={e => { setSource(e.target.value); setPage(0); }}
+          style={{ padding: "9px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-2)", color: "var(--text-2)", fontSize: 13, outline: "none" }}>
           <option value="">All sources</option>
           <option value="remote_jobs">Remote Jobs</option>
-          <option value="tech_jobs">Tech Jobs</option>
           <option value="curated">Curated</option>
           <option value="google_sheet">Google Sheet</option>
-        </select>
-        <select
-          value={remote === undefined ? "" : String(remote)}
-          onChange={e => { setRemote(e.target.value === "" ? undefined : e.target.value === "true"); setPage(0); }}
-          className="px-3 py-2 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] text-sm focus:outline-none"
-        >
-          <option value="">Remote + On-site</option>
-          <option value="true">Remote only</option>
-          <option value="false">On-site only</option>
         </select>
       </div>
 
       {isLoading ? (
-        <div className="grid gap-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-20 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] animate-pulse" />
+        <div style={{ display: "grid", gap: 8 }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} style={{ height: 76, borderRadius: 12, background: "var(--bg-2)", border: "1px solid var(--border)", animation: "pulse 1.5s infinite" }} />
           ))}
         </div>
       ) : (
         <>
-          <div className="text-xs text-[hsl(var(--muted-foreground))] mb-3">{data?.length ?? 0} results</div>
-          <div className="grid gap-3">
+          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 12 }}>{data?.length ?? 0} results · page {page + 1}</div>
+          <div style={{ display: "grid", gap: 6 }}>
             {data?.map(opp => (
-              <div key={opp.id} className="p-4 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] hover:shadow-sm transition">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
+              <div key={opp.id} style={{ padding: "14px 18px", borderRadius: 12, border: "1px solid var(--border)", background: "var(--bg-2)", display: "flex", alignItems: "center", gap: 16, transition: "border-color 0.15s" }}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = "var(--border-hover)"}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                     <a href={opp.url} target="_blank" rel="noopener noreferrer"
-                      className="font-medium text-sm hover:text-[hsl(var(--primary))] hover:underline transition line-clamp-1">
+                      style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", textDecoration: "none" }}
+                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "var(--primary)"}
+                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text)"}>
                       {opp.title}
                     </a>
-                    <p className="text-xs text-[hsl(var(--muted-foreground))] mt-0.5">{opp.organization}</p>
+                    {opp.is_remote && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "var(--primary-dim)", color: "var(--primary)", border: "1px solid var(--primary-glow)" }}>Remote</span>}
                   </div>
-                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    {opp.stipend && <span className="text-xs text-green-600 font-medium">{opp.stipend}</span>}
-                    {opp.is_remote && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">Remote</span>}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, color: "var(--text-2)" }}>{opp.organization}</span>
+                    {opp.stipend && <span style={{ fontSize: 11, color: "var(--success)" }}>· {opp.stipend}</span>}
+                    {opp.location && <span style={{ fontSize: 11, color: "var(--text-3)" }}>· {opp.location}</span>}
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {opp.tags?.split(",").slice(0, 2).map(t => t.trim()).filter(t => t && !t.startsWith("email:")).map(tagBadge)}
+                    </div>
                   </div>
                 </div>
-                <div className="flex gap-2 mt-2 flex-wrap">
-                  {opp.tags?.split(",").slice(0, 2).map(tag => tag.trim()).filter(t => t && !t.startsWith("email:")).map(tag => (
-                    <span key={tag} className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]">{tag}</span>
-                  ))}
-                  {opp.location && <span className="text-xs text-[hsl(var(--muted-foreground))]">📍 {opp.location}</span>}
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button onClick={() => handleAction(opp, "saved")} disabled={saving === opp.id + "saved"}
+                    style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-2)", fontSize: 12, cursor: "pointer", transition: "all 0.15s" }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--primary)"; (e.currentTarget as HTMLElement).style.color = "var(--primary)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-2)"; }}>
+                    {saving === opp.id + "saved" ? "..." : "Save"}
+                  </button>
+                  <button onClick={() => handleAction(opp, "applied")} disabled={saving === opp.id + "applied"}
+                    style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "var(--primary)", color: "white", fontSize: 12, cursor: "pointer", fontWeight: 500, transition: "opacity 0.15s" }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "0.85"}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "1"}>
+                    {saving === opp.id + "applied" ? "..." : "Applied ✓"}
+                  </button>
                 </div>
               </div>
             ))}
           </div>
-          <div className="flex justify-between mt-6">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20 }}>
             <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-              className="px-4 py-2 rounded-lg border border-[hsl(var(--border))] text-sm disabled:opacity-40 hover:bg-[hsl(var(--accent))] transition">
-              Previous
+              style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-2)", fontSize: 13, cursor: page === 0 ? "not-allowed" : "pointer", opacity: page === 0 ? 0.4 : 1 }}>
+              ← Previous
             </button>
-            <span className="text-sm text-[hsl(var(--muted-foreground))] self-center">Page {page + 1}</span>
             <button onClick={() => setPage(p => p + 1)} disabled={(data?.length ?? 0) < limit}
-              className="px-4 py-2 rounded-lg border border-[hsl(var(--border))] text-sm disabled:opacity-40 hover:bg-[hsl(var(--accent))] transition">
-              Next
+              style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-2)", fontSize: 13, cursor: (data?.length ?? 0) < limit ? "not-allowed" : "pointer", opacity: (data?.length ?? 0) < limit ? 0.4 : 1 }}>
+              Next →
             </button>
           </div>
         </>
