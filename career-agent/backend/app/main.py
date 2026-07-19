@@ -12,6 +12,7 @@ from app.api.opportunities import router as opportunities_router
 from app.api.sheet import router as sheet_router
 from app.api.ai import router as ai_router
 from app.api.ingestion import router as ingestion_router
+from app.api.analytics import router as analytics_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 
@@ -48,6 +49,7 @@ app.include_router(opportunities_router)
 app.include_router(sheet_router)
 app.include_router(ai_router)
 app.include_router(ingestion_router)
+app.include_router(analytics_router)
 
 
 def custom_openapi():
