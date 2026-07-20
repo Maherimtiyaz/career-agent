@@ -1,4 +1,4 @@
-﻿"""Authentication endpoints: register, login, refresh, current user."""
+﻿"""Authentication endpoints: register, login, refresh, current user, profile."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +15,7 @@ from app.core.security import (
 from app.crud.user import create_user, get_user_by_email
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import LoginRequest, RefreshRequest, Token, UserCreate, UserRead
+from app.schemas.user import LoginRequest, ProfileUpdate, RefreshRequest, Token, UserCreate, UserRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -51,4 +51,17 @@ async def refresh(body: RefreshRequest) -> Token:
 
 @router.get("/me", response_model=UserRead)
 async def me(current_user: User = Depends(get_current_user)) -> User:
+    return current_user
+
+
+@router.patch("/me", response_model=UserRead)
+async def update_profile(
+    body: ProfileUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> User:
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(current_user, field, value)
+    await db.commit()
+    await db.refresh(current_user)
     return current_user

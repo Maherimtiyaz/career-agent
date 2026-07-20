@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { logout } from "@/lib/auth";
@@ -9,6 +9,7 @@ const nav = [
   { href: "/dashboard/opportunities", label: "Opportunities", icon: "◈" },
   { href: "/dashboard/applications", label: "Applications", icon: "◎" },
   { href: "/dashboard/analytics", label: "Analytics", icon: "◑" },
+  { href: "/dashboard/profile", label: "Profile", icon: "◉" },
   { href: "/dashboard/import", label: "Import", icon: "⤓" },
 ];
 
