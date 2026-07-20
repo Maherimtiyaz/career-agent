@@ -1,70 +1,133 @@
 ﻿"use client";
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 
-export default function ImportPage() {
-  const [url, setUrl] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ inserted: number; skipped: number } | null>(null);
-  const [error, setError] = useState("");
+interface ScrapeResult {
+  source: string;
+  inserted: number;
+  error?: string;
+}
 
-  async function handleImport() {
+export default function ImportPage() {
+  const qc = useQueryClient();
+  const [url, setUrl] = useState("");
+  const [sheetLoading, setSheetLoading] = useState(false);
+  const [sheetResult, setSheetResult] = useState<{ inserted: number; skipped: number } | null>(null);
+  const [sheetError, setSheetError] = useState("");
+  const [scrapeResults, setScrapeResults] = useState<ScrapeResult[] | null>(null);
+
+  const scrapeMutation = useMutation({
+    mutationFn: () => api.post("/ingestion/run?source=all"),
+    onSuccess: (res) => {
+      setScrapeResults(res.data.results);
+      qc.invalidateQueries({ queryKey: ["opportunities"] });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+      qc.invalidateQueries({ queryKey: ["ai-recommendations"] });
+    },
+  });
+
+  async function handleSheetImport() {
     if (!url.trim()) return;
-    setLoading(true);
-    setError("");
-    setResult(null);
+    setSheetLoading(true);
+    setSheetError("");
+    setSheetResult(null);
     try {
       const res = await api.post("/sheet/import", { sheet_url: url });
-      setResult(res.data);
+      setSheetResult(res.data);
+      qc.invalidateQueries({ queryKey: ["applications"] });
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(msg ?? "Import failed");
+      setSheetError(msg ?? "Import failed");
     } finally {
-      setLoading(false);
+      setSheetLoading(false);
     }
   }
 
+  const totalInserted = scrapeResults?.reduce((a, r) => a + (r.inserted ?? 0), 0) ?? 0;
+
   return (
-    <div className="p-8 max-w-2xl">
-      <h1 className="text-2xl font-bold mb-1">Import from Google Sheet</h1>
-      <p className="text-sm text-[hsl(var(--muted-foreground))] mb-8">
-        Sync your personal opportunity tracker from a public Google Sheet. Your sheet must be shared as Anyone with the link can view.
-      </p>
+    <div style={{ padding: "32px 40px", maxWidth: 720 }}>
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>Data Sources</h1>
+        <p style={{ color: "var(--text-2)", fontSize: 13, marginTop: 4 }}>Refresh live data or import your personal tracker</p>
+      </div>
 
-      <div className="p-6 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] mb-6">
-        <h2 className="font-semibold text-sm mb-3">Required column headers</h2>
-        <div className="grid grid-cols-2 gap-2 text-xs text-[hsl(var(--muted-foreground))]">
-          {["company (required)", "role (required)", "job_link", "hr_contact", "status", "date_applied", "notes"].map(col => (
-            <div key={col} className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--primary))] flex-shrink-0" />
-              {col}
+      <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, padding: 24, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Live Platform Scrapers</div>
+            <p style={{ fontSize: 12, color: "var(--text-2)", margin: 0, lineHeight: 1.6 }}>
+              Fetch fresh opportunities from GSoC, YC Jobs (HN Who's Hiring), MLH Fellowship and Devfolio.
+              Runs automatically every 24 hours. Click to trigger manually.
+            </p>
+            <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
+              {["GSoC", "YC Jobs", "MLH", "Devfolio"].map(s => (
+                <span key={s} style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: "var(--primary-dim)", color: "var(--primary)", border: "1px solid var(--primary-glow)" }}>{s}</span>
+              ))}
             </div>
-          ))}
+          </div>
+          <button
+            onClick={() => { setScrapeResults(null); scrapeMutation.mutate(); }}
+            disabled={scrapeMutation.isPending}
+            style={{ padding: "9px 18px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 13, fontWeight: 500, border: "none", cursor: scrapeMutation.isPending ? "not-allowed" : "pointer", opacity: scrapeMutation.isPending ? 0.7 : 1, whiteSpace: "nowrap", flexShrink: 0 }}>
+            {scrapeMutation.isPending ? "Scraping..." : "↻ Refresh Now"}
+          </button>
         </div>
+
+        {scrapeResults && (
+          <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 10, background: totalInserted > 0 ? "var(--success-dim)" : "var(--bg-3)", border: "1px solid " + (totalInserted > 0 ? "rgba(52,211,153,0.2)" : "var(--border)") }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: totalInserted > 0 ? "var(--success)" : "var(--text-2)", marginBottom: 8 }}>
+              {totalInserted > 0 ? ✓ Added  new opportunities : "✓ All sources up to date"}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6 }}>
+              {scrapeResults.map(r => (
+                <div key={r.source} style={{ fontSize: 11, color: "var(--text-2)", display: "flex", justifyContent: "space-between", padding: "4px 8px", borderRadius: 6, background: "rgba(255,255,255,0.04)" }}>
+                  <span>{r.source}</span>
+                  <span style={{ color: r.error ? "var(--danger)" : r.inserted > 0 ? "var(--success)" : "var(--text-3)" }}>
+                    {r.error ? "error" : "+" + r.inserted}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="space-y-3">
-        <input
-          value={url} onChange={e => setUrl(e.target.value)}
-          placeholder="https://docs.google.com/spreadsheets/d/..."
-          className="w-full px-3 py-2 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]"
-        />
-        <button onClick={handleImport} disabled={loading || !url.trim()}
-          className="w-full py-2 rounded-lg bg-[hsl(var(--primary))] text-white text-sm font-medium hover:opacity-90 transition disabled:opacity-50">
-          {loading ? "Importing..." : "Import Sheet"}
-        </button>
-      </div>
+      <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, padding: 24 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Import from Google Sheet</div>
+        <p style={{ fontSize: 12, color: "var(--text-2)", margin: "0 0 16px", lineHeight: 1.6 }}>
+          Sync your personal application tracker. Sheet must be shared as Anyone with the link can view.
+          Required columns: <strong style={{ color: "var(--text)" }}>company</strong>, <strong style={{ color: "var(--text)" }}>role</strong>.
+          Optional: job_link, hr_contact, status, date_applied, notes.
+        </p>
 
-      {result && (
-        <div className="mt-4 p-4 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700">
-          ✓ Import complete — {result.inserted} new rows added, {result.skipped} skipped (already exist)
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={url} onChange={e => setUrl(e.target.value)}
+            placeholder="https://docs.google.com/spreadsheets/d/..."
+            style={{ flex: 1, padding: "9px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-3)", color: "var(--text)", fontSize: 13, outline: "none" }}
+            onFocus={e => (e.target as HTMLInputElement).style.borderColor = "var(--primary)"}
+            onBlur={e => (e.target as HTMLInputElement).style.borderColor = "var(--border)"} />
+          <button
+            onClick={handleSheetImport}
+            disabled={sheetLoading || !url.trim()}
+            style={{ padding: "9px 18px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 13, fontWeight: 500, border: "none", cursor: sheetLoading || !url.trim() ? "not-allowed" : "pointer", opacity: sheetLoading || !url.trim() ? 0.6 : 1, whiteSpace: "nowrap" }}>
+            {sheetLoading ? "Importing..." : "Import"}
+          </button>
         </div>
-      )}
-      {error && (
-        <div className="mt-4 p-4 rounded-lg bg-red-50 border border-red-200 text-sm text-red-600">
-          {error}
-        </div>
-      )}
+
+        {sheetResult && (
+          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "var(--success-dim)", border: "1px solid rgba(52,211,153,0.2)", fontSize: 12, color: "var(--success)" }}>
+            ✓ {sheetResult.inserted} rows added, {sheetResult.skipped} skipped
+          </div>
+        )}
+        {sheetError && (
+          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "var(--danger-dim)", border: "1px solid rgba(248,113,113,0.2)", fontSize: 12, color: "var(--danger)" }}>
+            {sheetError}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

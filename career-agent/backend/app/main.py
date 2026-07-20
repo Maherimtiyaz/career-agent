@@ -2,29 +2,36 @@
 
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
+from app.api.ai import router as ai_router
+from app.api.analytics import router as analytics_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
+from app.api.ingestion import router as ingestion_router
 from app.api.opportunities import router as opportunities_router
 from app.api.sheet import router as sheet_router
-from app.api.ai import router as ai_router
-from app.api.ingestion import router as ingestion_router
-from app.api.analytics import router as analytics_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.scheduler.jobs import run_all_scrapers
 
 settings = get_settings()
 configure_logging(settings.environment)
 logger = get_logger(__name__)
 
+scheduler = AsyncIOScheduler()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("startup", environment=settings.environment)
+    scheduler.add_job(run_all_scrapers, "interval", hours=24, id="scrape_all")
+    scheduler.start()
+    logger.info("startup", environment=settings.environment, scheduler="started")
     yield
+    scheduler.shutdown()
     logger.info("shutdown")
 
 
