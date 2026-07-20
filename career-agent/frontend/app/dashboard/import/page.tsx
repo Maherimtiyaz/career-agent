@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
@@ -58,8 +58,7 @@ export default function ImportPage() {
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Live Platform Scrapers</div>
             <p style={{ fontSize: 12, color: "var(--text-2)", margin: 0, lineHeight: 1.6 }}>
-              Fetch fresh opportunities from GSoC, YC Jobs (HN Who's Hiring), MLH Fellowship and Devfolio.
-              Runs automatically every 24 hours. Click to trigger manually.
+              Fetch fresh opportunities from GSoC, YC Jobs, MLH and Devfolio. Runs automatically every 24 hours.
             </p>
             <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
               {["GSoC", "YC Jobs", "MLH", "Devfolio"].map(s => (
@@ -71,14 +70,13 @@ export default function ImportPage() {
             onClick={() => { setScrapeResults(null); scrapeMutation.mutate(); }}
             disabled={scrapeMutation.isPending}
             style={{ padding: "9px 18px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 13, fontWeight: 500, border: "none", cursor: scrapeMutation.isPending ? "not-allowed" : "pointer", opacity: scrapeMutation.isPending ? 0.7 : 1, whiteSpace: "nowrap", flexShrink: 0 }}>
-            {scrapeMutation.isPending ? "Scraping..." : "↻ Refresh Now"}
+            {scrapeMutation.isPending ? "Scraping..." : "Refresh Now"}
           </button>
         </div>
-
         {scrapeResults && (
-          <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 10, background: totalInserted > 0 ? "var(--success-dim)" : "var(--bg-3)", border: "1px solid " + (totalInserted > 0 ? "rgba(52,211,153,0.2)" : "var(--border)") }}>
+          <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 10, background: totalInserted > 0 ? "var(--success-dim)" : "var(--bg-3)", border: "1px solid var(--border)" }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: totalInserted > 0 ? "var(--success)" : "var(--text-2)", marginBottom: 8 }}>
-              {totalInserted > 0 ? ✓ Added  new opportunities : "✓ All sources up to date"}
+              {totalInserted > 0 ? "Added " + totalInserted + " new opportunities" : "All sources up to date"}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6 }}>
               {scrapeResults.map(r => (
@@ -97,33 +95,25 @@ export default function ImportPage() {
       <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, padding: 24 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Import from Google Sheet</div>
         <p style={{ fontSize: 12, color: "var(--text-2)", margin: "0 0 16px", lineHeight: 1.6 }}>
-          Sync your personal application tracker. Sheet must be shared as Anyone with the link can view.
-          Required columns: <strong style={{ color: "var(--text)" }}>company</strong>, <strong style={{ color: "var(--text)" }}>role</strong>.
-          Optional: job_link, hr_contact, status, date_applied, notes.
+          Sync your personal tracker. Sheet must be shared as Anyone with the link can view. Required columns: company, role.
         </p>
-
         <div style={{ display: "flex", gap: 8 }}>
-          <input
-            value={url} onChange={e => setUrl(e.target.value)}
-            placeholder="https://docs.google.com/spreadsheets/d/..."
+          <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..."
             style={{ flex: 1, padding: "9px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-3)", color: "var(--text)", fontSize: 13, outline: "none" }}
             onFocus={e => (e.target as HTMLInputElement).style.borderColor = "var(--primary)"}
             onBlur={e => (e.target as HTMLInputElement).style.borderColor = "var(--border)"} />
-          <button
-            onClick={handleSheetImport}
-            disabled={sheetLoading || !url.trim()}
-            style={{ padding: "9px 18px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 13, fontWeight: 500, border: "none", cursor: sheetLoading || !url.trim() ? "not-allowed" : "pointer", opacity: sheetLoading || !url.trim() ? 0.6 : 1, whiteSpace: "nowrap" }}>
+          <button onClick={handleSheetImport} disabled={sheetLoading || !url.trim()}
+            style={{ padding: "9px 18px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 13, fontWeight: 500, border: "none", cursor: "pointer", opacity: sheetLoading || !url.trim() ? 0.6 : 1 }}>
             {sheetLoading ? "Importing..." : "Import"}
           </button>
         </div>
-
         {sheetResult && (
-          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "var(--success-dim)", border: "1px solid rgba(52,211,153,0.2)", fontSize: 12, color: "var(--success)" }}>
-            ✓ {sheetResult.inserted} rows added, {sheetResult.skipped} skipped
+          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "var(--success-dim)", fontSize: 12, color: "var(--success)" }}>
+            {sheetResult.inserted} rows added, {sheetResult.skipped} skipped
           </div>
         )}
         {sheetError && (
-          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "var(--danger-dim)", border: "1px solid rgba(248,113,113,0.2)", fontSize: 12, color: "var(--danger)" }}>
+          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "var(--danger-dim)", fontSize: 12, color: "var(--danger)" }}>
             {sheetError}
           </div>
         )}
