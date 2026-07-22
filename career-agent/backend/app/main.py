@@ -1,4 +1,4 @@
-﻿"""Career Agent v6 - FastAPI application entrypoint."""
+"""Career Agent v6 - FastAPI application entrypoint."""
 
 from contextlib import asynccontextmanager
 
@@ -9,6 +9,7 @@ from fastapi.openapi.utils import get_openapi
 
 from app.api.ai import router as ai_router
 from app.api.analytics import router as analytics_router
+from app.api.outreach import router as outreach_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 from app.api.ingestion import router as ingestion_router
@@ -57,6 +58,7 @@ app.include_router(sheet_router)
 app.include_router(ai_router)
 app.include_router(ingestion_router)
 app.include_router(analytics_router)
+app.include_router(outreach_router)
 
 
 def custom_openapi():
