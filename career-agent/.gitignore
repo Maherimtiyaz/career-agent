@@ -1,6 +1,3 @@
 
 # env files
-backend/.env
-backend/.env.example
-frontend/.env.local
-frontend/.env.local.example
+backend/.envYou have 
