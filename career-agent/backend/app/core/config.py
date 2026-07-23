@@ -1,4 +1,4 @@
-"""Application configuration loaded from environment variables."""
+﻿"""Application configuration loaded from environment variables."""
 
 from functools import lru_cache
 
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://localhost"
 
     google_sheets_enabled: bool = True
+    anthropic_api_key: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
