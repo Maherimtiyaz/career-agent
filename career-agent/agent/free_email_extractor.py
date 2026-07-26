@@ -1,248 +1,232 @@
 """
-Free email extractor - scrapes emails directly from job pages and company sites.
-No API keys needed. Works best on startup job boards and company career pages.
-Sources: YC startup pages, company websites, job posting pages, startup directories.
+Free email extractor - no API key limits.
+Sources:
+1. GitHub org pages (founders often list emails)
+2. Direct job page scraping (works on your machine, not datacenter IPs)
+3. Company contact/about pages
+4. GitHub README scraping for hiring repos
 """
 import asyncio
 import re
 import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
-HEADERS = {
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+
+HEADERS_BROWSER = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
 }
 
-EMAIL_REGEX = re.compile(r"[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}", re.IGNORECASE)
+HEADERS_GITHUB = {
+    "Accept": "application/vnd.github.v3+json",
+    "User-Agent": "career-agent",
+}
+if GITHUB_TOKEN:
+    HEADERS_GITHUB["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
-SKIP_EMAILS = {
-    "example.com", "test.com", "domain.com", "email.com",
-    "yourcompany.com", "sentry.io", "wixpress.com",
-    "amazonaws.com", "cloudfront.net", "githubusercontent.com",
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}", re.IGNORECASE)
+
+SKIP_DOMAINS = {
+    "example.com", "test.com", "domain.com", "sentry.io",
+    "wixpress.com", "amazonaws.com", "cloudfront.net",
+    "githubusercontent.com", "noreply.github.com",
+    "png", "jpg", "gif", "css", "js",
 }
 
-PRIORITY_KEYWORDS = ["hr", "recruit", "talent", "hire", "hiring", "jobs",
-                     "career", "people", "founder", "ceo", "cto", "team",
-                     "hello", "hi", "contact", "info", "apply"]
+PRIORITY = ["hr", "recruit", "talent", "hire", "hiring", "jobs",
+            "career", "people", "founder", "ceo", "cto", "hello",
+            "contact", "info", "apply", "team", "work"]
 
 
-def clean_emails(emails: list[str], domain: str = "") -> list[str]:
-    seen = set()
-    result = []
-    for email in emails:
-        email = email.lower().strip()
-        if email in seen:
+def clean_emails(raw: list[str], prefer_domain: str = "") -> list[str]:
+    seen, result = set(), []
+    for e in raw:
+        e = e.lower().strip().rstrip(".")
+        if e in seen:
             continue
-        seen.add(email)
-        parts = email.split("@")
+        seen.add(e)
+        parts = e.split("@")
         if len(parts) != 2:
             continue
-        edomain = parts[1]
-        if edomain in SKIP_EMAILS:
+        domain = parts[1]
+        if any(domain.endswith(s) for s in SKIP_DOMAINS):
             continue
-        if edomain.endswith((".png", ".jpg", ".gif", ".css", ".js")):
+        if len(parts[0]) < 2 or len(domain) < 4:
             continue
-        if domain and edomain == domain:
-            result.insert(0, email)
-        else:
-            result.append(email)
-    return result
+        result.append(e)
+    priority = [e for e in result if any(k in e.split("@")[0] for k in PRIORITY)]
+    rest = [e for e in result if e not in priority]
+    if prefer_domain:
+        priority = sorted(priority, key=lambda e: 0 if prefer_domain in e else 1)
+        rest = sorted(rest, key=lambda e: 0 if prefer_domain in e else 1)
+    return priority + rest
 
 
-def score_email(email: str) -> int:
-    local = email.split("@")[0].lower()
-    return sum(2 for kw in PRIORITY_KEYWORDS if kw in local)
-
-
-async def scrape_page_emails(url: str, client: httpx.AsyncClient) -> list[str]:
+async def scrape_url(url: str, client: httpx.AsyncClient) -> list[str]:
     try:
-        resp = await client.get(url, headers=HEADERS, follow_redirects=True, timeout=12)
+        resp = await client.get(url, headers=HEADERS_BROWSER, follow_redirects=True, timeout=12)
         if resp.status_code != 200:
             return []
-        text = resp.text
-        emails = EMAIL_REGEX.findall(text)
         domain = urlparse(url).netloc.replace("www.", "")
-        return clean_emails(emails, domain)
+        return clean_emails(EMAIL_RE.findall(resp.text), domain)
     except Exception:
         return []
 
 
-async def find_contact_page(base_url: str, client: httpx.AsyncClient) -> str | None:
-    contact_paths = ["/contact", "/contact-us", "/about", "/team",
-                     "/careers", "/jobs", "/hire", "/about-us", "/company"]
+async def find_contact_urls(base_url: str, client: httpx.AsyncClient) -> list[str]:
     domain = urlparse(base_url).scheme + "://" + urlparse(base_url).netloc
-    for path in contact_paths:
+    paths = ["/contact", "/contact-us", "/about", "/team", "/careers",
+             "/jobs", "/hire", "/about-us", "/company", "/work-with-us"]
+    found = []
+    for path in paths:
         try:
             url = domain + path
-            resp = await client.get(url, headers=HEADERS, follow_redirects=True, timeout=8)
-            if resp.status_code == 200:
-                return url
+            resp = await client.get(url, headers=HEADERS_BROWSER, follow_redirects=True, timeout=8)
+            if resp.status_code == 200 and len(resp.text) > 500:
+                found.append(url)
+                if len(found) >= 2:
+                    break
         except Exception:
             continue
-    return None
+    return found
 
 
 async def extract_from_job_page(job_url: str) -> dict:
-    """Main function - extracts emails from a job posting URL."""
-    result = {"emails": [], "source": None, "tried": []}
-
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        result["tried"].append(job_url)
-        emails = await scrape_page_emails(job_url, client)
-
+    tried = []
+    async with httpx.AsyncClient(timeout=15) as client:
+        tried.append(job_url)
+        emails = await scrape_url(job_url, client)
         if emails:
-            result["emails"] = sorted(emails, key=score_email, reverse=True)
-            result["source"] = "job_page"
-            return result
+            return {"emails": emails, "source": "job_page", "tried": tried}
 
         parsed = urlparse(job_url)
         base = parsed.scheme + "://" + parsed.netloc
         if base != job_url:
-            result["tried"].append(base)
-            emails = await scrape_page_emails(base, client)
+            tried.append(base)
+            emails = await scrape_url(base, client)
             if emails:
-                result["emails"] = sorted(emails, key=score_email, reverse=True)
-                result["source"] = "company_homepage"
-                return result
+                return {"emails": emails, "source": "homepage", "tried": tried}
 
-        contact = await find_contact_page(base, client)
-        if contact:
-            result["tried"].append(contact)
-            emails = await scrape_page_emails(contact, client)
+        contact_urls = await find_contact_urls(base, client)
+        for curl in contact_urls:
+            tried.append(curl)
+            emails = await scrape_url(curl, client)
             if emails:
-                result["emails"] = sorted(emails, key=score_email, reverse=True)
-                result["source"] = "contact_page"
-                return result
+                return {"emails": emails, "source": "contact_page", "tried": tried}
 
-    return result
+    return {"emails": [], "source": None, "tried": tried}
 
 
-async def scrape_yc_startups(limit: int = 50) -> list[dict]:
-    """
-    Scrape YC startup directory for companies hiring.
-    Returns list of {company, url, emails}.
-    """
+async def search_github_for_hiring(query: str = "python backend intern hiring 2026", limit: int = 20) -> list[dict]:
+    """Search GitHub repos and READMEs for hiring notices with contact emails."""
     results = []
-    urls_to_try = [
-        "https://www.ycombinator.com/companies?batch=W24&batch=S24&batch=W23&isHiring=true",
-        "https://www.workatastartup.com/jobs?role=eng&jobType=intern",
-        "https://www.workatastartup.com/jobs?role=eng&remote=true",
-    ]
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            resp = await client.get(
+                "https://api.github.com/search/repositories",
+                headers=HEADERS_GITHUB,
+                params={"q": query, "sort": "updated", "per_page": limit},
+            )
+            if resp.status_code != 200:
+                print(f"GitHub API: {resp.status_code}")
+                return []
 
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        for url in urls_to_try:
-            try:
-                resp = await client.get(url, headers=HEADERS)
-                if resp.status_code != 200:
+            items = resp.json().get("items", [])
+            for item in items:
+                full_name = item["full_name"]
+                company = item.get("organization", {})
+                if isinstance(company, dict):
+                    company = company.get("login", full_name.split("/")[0])
+
+                readme_resp = await client.get(
+                    f"https://api.github.com/repos/{full_name}/readme",
+                    headers={**HEADERS_GITHUB, "Accept": "application/vnd.github.v3.raw"},
+                )
+                if readme_resp.status_code != 200:
                     continue
-                soup = BeautifulSoup(resp.text, "html.parser")
 
-                company_links = set()
-                for a in soup.find_all("a", href=True):
-                    href = a["href"]
-                    if "ycombinator.com/companies/" in href or "workatastartup.com/companies/" in href:
-                        if href.startswith("http"):
-                            company_links.add(href)
-                        else:
-                            company_links.add(urljoin(url, href))
+                emails = clean_emails(EMAIL_RE.findall(readme_resp.text))
+                if emails:
+                    results.append({
+                        "company": company,
+                        "url": item["html_url"],
+                        "emails": emails[:3],
+                        "source": "github_readme",
+                    })
 
-                for link in list(company_links)[:20]:
-                    try:
-                        resp2 = await client.get(link, headers=HEADERS)
-                        if resp2.status_code != 200:
-                            continue
-                        soup2 = BeautifulSoup(resp2.text, "html.parser")
+                await asyncio.sleep(0.2)
 
-                        company_name = ""
-                        for tag in ["h1", "h2"]:
-                            el = soup2.find(tag)
-                            if el:
-                                company_name = el.get_text(strip=True)
-                                break
+        except Exception as e:
+            print(f"GitHub search error: {e}")
 
-                        website_link = None
-                        for a in soup2.find_all("a", href=True):
-                            href = a["href"]
-                            if href.startswith("http") and "ycombinator.com" not in href and "workatastartup.com" not in href:
-                                text = a.get_text(strip=True).lower()
-                                if any(k in text for k in ["website", "visit", "company", company_name.lower()[:5]]):
-                                    website_link = href
-                                    break
-
-                        emails = EMAIL_REGEX.findall(resp2.text)
-                        domain = ""
-                        if website_link:
-                            domain = urlparse(website_link).netloc.replace("www.", "")
-
-                        cleaned = clean_emails(emails, domain)
-                        if cleaned:
-                            results.append({
-                                "company": company_name or link.split("/")[-1],
-                                "url": website_link or link,
-                                "yc_url": link,
-                                "emails": sorted(cleaned, key=score_email, reverse=True),
-                            })
-                    except Exception:
-                        continue
-
-                    await asyncio.sleep(0.5)
-
-                if len(results) >= limit:
-                    break
-
-            except Exception:
-                continue
-
-    return results[:limit]
+    return results
 
 
-async def scrape_startup_job_boards() -> list[dict]:
-    """
-    Scrape startup-focused job boards that expose emails.
-    """
+async def scrape_startup_sources() -> list[dict]:
+    """Scrape startup sources that work from residential IPs."""
     results = []
     sources = [
         {
-            "url": "https://remoteok.com/remote-intern+jobs",
-            "name": "RemoteOK",
+            "name": "IndieHackers",
+            "url": "https://www.indiehackers.com/jobs",
         },
         {
-            "url": "https://remoteok.com/remote-dev+jobs?location=worldwide",
-            "name": "RemoteOK Dev",
+            "name": "HackerNews Jobs",
+            "url": "https://news.ycombinator.com/jobs",
+        },
+        {
+            "name": "GitHub Hiring",
+            "url": "https://github.com/trending",
+        },
+        {
+            "name": "AngelList",
+            "url": "https://angel.co/jobs",
         },
     ]
 
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
         for source in sources:
             try:
-                resp = await client.get(source["url"], headers=HEADERS)
+                resp = await client.get(source["url"], headers=HEADERS_BROWSER)
                 if resp.status_code != 200:
                     continue
+
                 soup = BeautifulSoup(resp.text, "html.parser")
+                emails = clean_emails(EMAIL_RE.findall(resp.text))
 
-                emails = EMAIL_REGEX.findall(resp.text)
-                cleaned = clean_emails(emails)
-
-                job_links = []
+                job_links = set()
                 for a in soup.find_all("a", href=True):
                     href = a["href"]
-                    if "/remote-jobs/" in href or "/job/" in href:
+                    if any(k in href for k in ["/job/", "/jobs/", "/careers/", "/hiring"]):
                         full = urljoin(source["url"], href)
-                        if full not in job_links:
-                            job_links.append(full)
+                        if full.startswith("http"):
+                            job_links.add(full)
 
-                for link in job_links[:15]:
-                    page_emails = await scrape_page_emails(link, client)
+                for link in list(job_links)[:10]:
+                    page_emails = await scrape_url(link, client)
                     if page_emails:
                         results.append({
-                            "company": link.split("/")[-1].replace("-", " ").title(),
+                            "company": link.split("/")[-2] or source["name"],
                             "url": link,
-                            "emails": page_emails,
+                            "emails": page_emails[:3],
                             "source": source["name"],
                         })
                     await asyncio.sleep(0.3)
+
+                if emails:
+                    results.append({
+                        "company": source["name"],
+                        "url": source["url"],
+                        "emails": emails[:5],
+                        "source": source["name"],
+                    })
 
             except Exception:
                 continue
@@ -250,21 +234,12 @@ async def scrape_startup_job_boards() -> list[dict]:
     return results
 
 
-async def run_free_extractor(job_url: str = "", mode: str = "url") -> list[dict]:
-    """
-    Main entry point.
-    mode="url": extract from a specific job URL
-    mode="yc": scrape YC startups
-    mode="boards": scrape startup job boards
-    """
+async def run_free_extractor(job_url: str = "", mode: str = "github") -> list[dict]:
     if mode == "url" and job_url:
         result = await extract_from_job_page(job_url)
         return [{"url": job_url, "emails": result["emails"], "source": result["source"]}]
-
-    elif mode == "yc":
-        return await scrape_yc_startups(limit=30)
-
+    elif mode == "github":
+        return await search_github_for_hiring()
     elif mode == "boards":
-        return await scrape_startup_job_boards()
-
+        return await scrape_startup_sources()
     return []
