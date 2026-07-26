@@ -1,8 +1,9 @@
 """
-Career Agent CLI — runs every morning.
-Usage: python agent.py
-       python agent.py --dry-run   (preview without sending)
-       python agent.py --followups (send follow-ups only)
+Career Agent CLI
+Usage:
+  python agent.py             - run full outreach
+  python agent.py --dry-run   - preview without sending
+  python agent.py --followups - follow-ups only
 """
 import asyncio
 import sys
@@ -10,7 +11,6 @@ from datetime import datetime
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich import print as rprint
 
 from db import init_db, already_emailed, log_email, get_pending_followups, mark_followup_sent, get_stats
 from email_drafter import draft_cold_email, draft_followup
@@ -23,48 +23,44 @@ FOLLOWUPS_ONLY = "--followups" in sys.argv
 MAX_EMAILS = 30
 
 
-async def run_outreach():
+async def run():
     init_db()
     console.print(Panel.fit(
         f"[bold purple]Career Agent[/bold purple] — {datetime.now().strftime('%A, %d %B %Y')}\n"
-        f"Mode: {'[yellow]DRY RUN[/yellow]' if DRY_RUN else '[green]LIVE[/green]'}",
+        f"Mode: {'[yellow]DRY RUN - no emails sent[/yellow]' if DRY_RUN else '[green]LIVE[/green]'}",
         border_style="purple"
     ))
 
     stats = get_stats()
     console.print(f"\n[dim]All time: {stats['total']} sent · {stats['replied']} replies · {stats['followups']} follow-ups[/dim]")
-    console.print(f"[dim]Today so far: {stats['today']} sent[/dim]\n")
+    console.print(f"[dim]Today: {stats['today']} sent[/dim]\n")
 
     if not FOLLOWUPS_ONLY:
-        console.print("[bold]Step 1: Fetching opportunities...[/bold]")
-        targets = await get_todays_targets(MAX_EMAILS)
+        console.print("[bold]Finding opportunities and emails...[/bold]")
+        targets, manual = await get_todays_targets(MAX_EMAILS)
 
-        if not targets:
-            console.print("[yellow]No opportunities with contact emails found today.[/yellow]")
-            console.print("[dim]Tip: Import a Google Sheet with hr_contact column to add more targets.[/dim]")
-        else:
-            console.print(f"[green]Found {len(targets)} opportunities with emails[/green]\n")
+        sent_count = 0
+        skipped_count = 0
 
-            table = Table(show_header=True, header_style="bold dim", border_style="dim")
-            table.add_column("Company", style="white")
-            table.add_column("Role", style="dim")
-            table.add_column("Email", style="cyan")
-            table.add_column("Score", justify="right", style="green")
+        if targets:
+            console.print(f"\n[green bold]✓ {len(targets)} opportunities with emails found[/green bold]")
 
-            sent_count = 0
-            skipped_count = 0
+            sent_table = Table(show_header=True, header_style="bold dim", border_style="dim", title="Outreach Queue")
+            sent_table.add_column("Company", style="white", max_width=25)
+            sent_table.add_column("Role", style="dim", max_width=30)
+            sent_table.add_column("Email", style="cyan", max_width=30)
+            sent_table.add_column("Source", style="dim", max_width=10)
+            sent_table.add_column("Status", max_width=10)
 
             for opp in targets:
-                company = opp.get("organization") or opp.get("company", "Unknown")
-                role = opp.get("title") or opp.get("role", "Internship")
+                company = (opp.get("organization") or opp.get("company") or "Unknown")[:25]
+                role = (opp.get("title") or opp.get("role") or "Internship")[:30]
                 hr_email = opp.get("hr_email", "")
+                email_source = opp.get("email_source", "")
                 opp_id = str(opp.get("id", ""))
 
-                if not hr_email:
-                    skipped_count += 1
-                    continue
-
                 if already_emailed(company, hr_email):
+                    sent_table.add_row(company, role, hr_email, email_source, "[dim]already sent[/dim]")
                     skipped_count += 1
                     continue
 
@@ -72,35 +68,51 @@ async def run_outreach():
                     company=company,
                     role=role,
                     job_link=opp.get("url", ""),
-                    notes=opp.get("description", "")[:200] if opp.get("description") else "",
+                    notes=(opp.get("description", "") or "")[:200],
                 )
 
-                table.add_row(company[:30], role[:35], hr_email[:35], str(opp.get("_score", 0)))
-
-                if not DRY_RUN:
+                if DRY_RUN:
+                    sent_table.add_row(company, role, hr_email, email_source, "[yellow]preview[/yellow]")
+                    console.print(f"\n[dim]Subject:[/dim] {draft['subject']}")
+                    console.print(f"[dim]{draft['body'][:150]}...[/dim]")
+                    sent_count += 1
+                else:
                     success = send_email(hr_email, draft["subject"], draft["body"])
                     if success:
                         log_email(opp_id, company, role, hr_email, draft["subject"], draft["body"])
+                        sent_table.add_row(company, role, hr_email, email_source, "[green]sent ✓[/green]")
                         sent_count += 1
                     else:
-                        console.print(f"[red]Failed to send to {hr_email}[/red]")
-                else:
-                    sent_count += 1
-                    console.print(f"\n[dim]--- PREVIEW: {company} ---[/dim]")
-                    console.print(f"[cyan]To:[/cyan] {hr_email}")
-                    console.print(f"[cyan]Subject:[/cyan] {draft['subject']}")
-                    console.print(f"[dim]{draft['body'][:200]}...[/dim]")
+                        sent_table.add_row(company, role, hr_email, email_source, "[red]failed[/red]")
 
-            console.print(table)
-            console.print(f"\n[green bold]Sent: {sent_count}[/green bold] · [dim]Skipped (already contacted or no email): {skipped_count}[/dim]")
+            console.print(sent_table)
+        else:
+            console.print("[yellow]No opportunities with emails found via APIs today.[/yellow]")
+            console.print("[dim]Add Hunter.io / Apollo / Prospeo API keys in agent/.env to find more.[/dim]")
 
-    console.print("\n[bold]Step 2: Checking follow-ups (5+ days no reply)...[/bold]")
+        if manual:
+            console.print(f"\n[bold yellow]{len(manual)} opportunities need manual apply (no email found):[/bold yellow]")
+            manual_table = Table(show_header=True, header_style="bold dim", border_style="dim", title="Apply Manually")
+            manual_table.add_column("Company", style="white", max_width=30)
+            manual_table.add_column("Role", style="dim", max_width=35)
+            manual_table.add_column("Link", style="blue", max_width=50)
+            for opp in manual:
+                manual_table.add_row(
+                    (opp.get("organization") or "")[:30],
+                    (opp.get("title") or "")[:35],
+                    (opp.get("url") or "")[:50],
+                )
+            console.print(manual_table)
+            console.print("[dim]Open these links and apply directly. The agent could not find a contact email.[/dim]")
+
+        console.print(f"\n[green bold]Emails sent: {sent_count}[/green bold] · [dim]Skipped: {skipped_count}[/dim]")
+
+    console.print("\n[bold]Checking follow-ups (5+ days, no reply)...[/bold]")
     pending = get_pending_followups(days=5)
 
     if not pending:
         console.print("[dim]No follow-ups due today.[/dim]")
     else:
-        console.print(f"[yellow]{len(pending)} follow-ups to send[/yellow]")
         fu_sent = 0
         for item in pending:
             draft = await draft_followup(item["company"], item["role"], item["subject"])
@@ -109,19 +121,20 @@ async def run_outreach():
                 if success:
                     mark_followup_sent(item["id"])
                     fu_sent += 1
+                    console.print(f"[green]↩ Follow-up sent → {item['company']}[/green]")
             else:
                 console.print(f"[dim]FOLLOW-UP PREVIEW → {item['company']}: {draft['subject']}[/dim]")
                 fu_sent += 1
         console.print(f"[green]Follow-ups sent: {fu_sent}[/green]")
 
-    final_stats = get_stats()
+    final = get_stats()
     console.print(Panel.fit(
         f"[bold green]Done![/bold green]\n"
-        f"Today: [bold]{final_stats['today']}[/bold] emails sent\n"
-        f"Total ever: {final_stats['total']} · Replies: {final_stats['replied']}",
+        f"Today: [bold]{final['today']}[/bold] emails sent\n"
+        f"Total: {final['total']} · Replies: {final['replied']} · Follow-ups: {final['followups']}",
         border_style="green"
     ))
 
 
 if __name__ == "__main__":
-    asyncio.run(run_outreach())
+    asyncio.run(run())
