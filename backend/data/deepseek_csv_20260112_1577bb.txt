@@ -1,0 +1,4 @@
+Opportunity Name,Category,Organization,Status (Planned/Applied/Interview/Rejected/Accepted),Application Deadline,Date Applied,Follow-up Date,Required Documents (SOP/CV/Certificates),IELTS Required?,Funding Status,Fee Waiver Requested?,Portal Login Details,Notes
+[Your Custom Entry 1],Internship,Google,Planned,15-Mar-2026,,15-Jan-2026,SOP, CV, MOI Certificate,No,Stipend provided,N/A,,Need 2 recommendation letters
+[Your Custom Entry 2],Research,MITACS,Applied,01-Sep-2025,15-Aug-2025,01-Oct-2025,Transcripts, CV, Research Proposal,No,Fully funded,N/A,username: xxx,Contacted professor
+[Your Custom Entry 3],Training,Forage,Completed,N/A,10-Jan-2025,N/A,None,No,Free certificate,N/A,,Completed 5 simulations
