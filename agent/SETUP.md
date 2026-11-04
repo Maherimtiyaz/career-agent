@@ -17,17 +17,18 @@ Edit agent/.env with your details:
 - Your Anthropic API key (get free at console.anthropic.com)
 - Your name, college, skills, GitHub, LinkedIn
 
-## 4. First run (opens browser for Gmail auth)
+## 4. Preview without Gmail
 python agent.py --dry-run
 
-This opens your browser once to authorize Gmail.
-After that, it runs silently every time.
+This previews drafted messages without sending or logging them. It does not need Gmail OAuth credentials or a token. The preview still fetches opportunities and drafts messages using the integrations configured in `agent/.env`.
 
-## 5. Daily run
+## 5. First live run
+Before sending, provide either an existing `token.json` or a Gmail OAuth Desktop App credentials file. By default, the client file is `agent/credentials.json`; set `GMAIL_CREDENTIALS_FILE` in `agent/.env` to use another path.
+
+The first live send opens a browser for Gmail authorization when needed and saves the resulting token as `agent/token.json`. If no opportunities or follow-ups need sending, the OAuth browser flow does not start.
+
+## 6. Daily live run
 python agent.py
-
-## 6. Preview without sending
-python agent.py --dry-run
 
 ## 7. Only send follow-ups
 python agent.py --followups

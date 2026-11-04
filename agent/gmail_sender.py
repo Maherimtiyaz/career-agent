@@ -17,6 +17,16 @@ CREDS_FILE = Path(__file__).parent / os.getenv("GMAIL_CREDENTIALS_FILE", "creden
 TOKEN_FILE = Path(__file__).parent / "token.json"
 
 
+def ensure_oauth_configured() -> None:
+    if CREDS_FILE.is_file() or TOKEN_FILE.is_file():
+        return
+    raise FileNotFoundError(
+        "Gmail OAuth is not configured. Add a Desktop App OAuth credentials file at "
+        f"{CREDS_FILE}, or set GMAIL_CREDENTIALS_FILE in agent/.env. "
+        "Use --dry-run to preview without Gmail OAuth."
+    )
+
+
 def get_gmail_service():
     creds = None
     if TOKEN_FILE.exists():

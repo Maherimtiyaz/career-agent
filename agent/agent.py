@@ -14,7 +14,7 @@ from rich.panel import Panel
 
 from db import init_db, already_emailed, log_email, get_pending_followups, mark_followup_sent, get_stats
 from email_drafter import draft_cold_email, draft_followup
-from gmail_sender import send_email
+from gmail_sender import ensure_oauth_configured, send_email
 from opportunity_fetcher import get_todays_targets
 
 console = Console()
@@ -24,6 +24,13 @@ MAX_EMAILS = 30
 
 
 async def run():
+    if not DRY_RUN:
+        try:
+            ensure_oauth_configured()
+        except FileNotFoundError as error:
+            console.print(Panel(str(error), title="Gmail OAuth setup required", border_style="red"))
+            raise SystemExit(2) from error
+
     init_db()
     console.print(Panel.fit(
         f"[bold purple]Career Agent[/bold purple] — {datetime.now().strftime('%A, %d %B %Y')}\n"
@@ -105,7 +112,10 @@ async def run():
             console.print(manual_table)
             console.print("[dim]Open these links and apply directly. The agent could not find a contact email.[/dim]")
 
-        console.print(f"\n[green bold]Emails sent: {sent_count}[/green bold] · [dim]Skipped: {skipped_count}[/dim]")
+        if DRY_RUN:
+            console.print(f"\n[yellow bold]Email previews: {sent_count}[/yellow bold] · [dim]Skipped: {skipped_count}[/dim]")
+        else:
+            console.print(f"\n[green bold]Emails sent: {sent_count}[/green bold] · [dim]Skipped: {skipped_count}[/dim]")
 
     console.print("\n[bold]Checking follow-ups (5+ days, no reply)...[/bold]")
     pending = get_pending_followups(days=5)
@@ -125,7 +135,10 @@ async def run():
             else:
                 console.print(f"[dim]FOLLOW-UP PREVIEW → {item['company']}: {draft['subject']}[/dim]")
                 fu_sent += 1
-        console.print(f"[green]Follow-ups sent: {fu_sent}[/green]")
+        if DRY_RUN:
+            console.print(f"[yellow]Follow-ups previewed: {fu_sent}[/yellow]")
+        else:
+            console.print(f"[green]Follow-ups sent: {fu_sent}[/green]")
 
     final = get_stats()
     console.print(Panel.fit(
