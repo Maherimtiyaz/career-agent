@@ -1,6 +1,6 @@
-﻿"""AI recommendations endpoint - keyword-based scoring until embeddings are added."""
+"""Semantic AI recommendations personalized to the current user's profile."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,16 +8,10 @@ from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.opportunity import Opportunity
 from app.models.user import User
+from app.services.recommendations import RecommendationModelUnavailable, rank_opportunities
 from app.schemas.opportunity import OpportunityRead
 
 router = APIRouter(prefix="/ai", tags=["ai"])
-
-TECH_KEYWORDS = [
-    "python", "fastapi", "django", "backend", "api", "sql", "postgresql",
-    "docker", "aws", "cloud", "data", "machine learning", "ai", "software",
-    "engineer", "developer", "intern", "fellowship", "open source", "remote",
-    "startup", "typescript", "javascript", "react", "node", "devops",
-]
 
 
 @router.get("/recommendations", response_model=list[OpportunityRead])
@@ -26,19 +20,19 @@ async def get_recommendations(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[Opportunity]:
-    """Return top opportunities scored by relevance to a student tech profile.
-    Uses keyword frequency scoring until embeddings are integrated in Phase 11."""
+    """Return opportunities ranked by local semantic similarity to the user's profile."""
     result = await db.execute(select(Opportunity).where(Opportunity.is_active == True))
-    all_opps = result.scalars().all()
+    opportunities = list(result.scalars().all())
+    if not opportunities:
+        return []
 
-    def score(opp: Opportunity) -> int:
-        text = " ".join(filter(None, [opp.title, opp.organization, opp.description, opp.tags])).lower()
-        base = sum(1 for kw in TECH_KEYWORDS if kw in text)
-        bonus = 3 if opp.stipend else 0
-        bonus += 2 if opp.is_remote else 0
-        bonus += 3 if opp.tags and "intern" in opp.tags.lower() else 0
-        bonus += 2 if opp.source == "curated" else 0
-        return base + bonus
-
-    scored = sorted(all_opps, key=score, reverse=True)
-    return scored[:limit]
+    try:
+        return await rank_opportunities(current_user, opportunities, limit)
+    except RecommendationModelUnavailable as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "The local recommendation model could not be loaded. "
+                "Check backend access to Hugging Face and retry."
+            ),
+        ) from error
