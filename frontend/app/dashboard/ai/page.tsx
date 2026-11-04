@@ -1,91 +1,116 @@
-﻿"use client";
+"use client";
+
+import Link from "next/link";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowDownToLine, ArrowRight, BriefcaseBusiness, MapPin, Sparkles } from "lucide-react";
 import api from "@/lib/api";
 import type { Opportunity } from "@/types";
 
 export default function AIPage() {
   const qc = useQueryClient();
   const [saving, setSaving] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["ai-recommendations"],
     queryFn: async () => (await api.get<Opportunity[]>("/ai/recommendations?limit=20")).data,
   });
 
   const applyMutation = useMutation({
-    mutationFn: ({ opp, status }: { opp: Opportunity; status: string }) =>
-      api.post("/applications", { company: opp.organization, role: opp.title, job_link: opp.url, status }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["applications"] }),
+    mutationFn: ({ opportunity, status }: { opportunity: Opportunity; status: string }) =>
+      api.post("/applications", {
+        company: opportunity.organization,
+        role: opportunity.title,
+        job_link: opportunity.url,
+        status,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["applications"] });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
   });
 
-  async function handleAction(opp: Opportunity, status: string) {
-    setSaving(opp.id + status);
-    try { await applyMutation.mutateAsync({ opp, status }); }
-    catch { }
-    finally { setSaving(null); }
+  async function handleAction(opportunity: Opportunity, status: string) {
+    setSaving(opportunity.id + status);
+    setFeedback("");
+    setErrorMessage("");
+    try {
+      await applyMutation.mutateAsync({ opportunity, status });
+      setFeedback(`“${opportunity.title}” added to your ${status === "saved" ? "saved roles" : "applications"}.`);
+    } catch {
+      setErrorMessage("That role couldn’t be added. It may already be in your tracker—check Applications and try again.");
+    } finally {
+      setSaving(null);
+    }
   }
 
   return (
-    <div style={{ padding: "32px 40px", maxWidth: 860 }}>
-      <div style={{ marginBottom: 28 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 10, background: "var(--primary-dim)", border: "1px solid var(--primary-glow)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)", fontSize: 14 }}>✦</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>AI Picks</h1>
+    <div className="page-wrap">
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">A better-fit starting point</div>
+          <h1 className="page-title">AI Picks</h1>
+          <p className="page-description">Opportunities ranked by how well they line up with your interests.</p>
         </div>
-        <p style={{ color: "var(--text-2)", fontSize: 13 }}>
-          Top opportunities matched to a student tech profile · keyword scoring · embeddings coming in Phase 11
-        </p>
+        <Link className="button button-secondary" href="/dashboard/profile"><Sparkles size={14} aria-hidden="true" /> Tune your profile</Link>
+      </header>
+
+      <div className="alert alert-info scoring-note">
+        <Sparkles size={15} aria-hidden="true" />
+        <span><strong>How these picks work:</strong> a local semantic model compares your skills, interests, and experience with each opportunity. Your profile stays in your Career Agent deployment. Add target roles and skills to make your recommendations more personal.</span>
       </div>
 
-      <div style={{ padding: "12px 16px", borderRadius: 10, border: "1px solid var(--primary-glow)", background: "var(--primary-dim)", marginBottom: 24, fontSize: 12, color: "var(--text-2)", display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <span style={{ color: "var(--primary)", fontSize: 14, marginTop: 1 }}>ℹ</span>
-        <div>
-          <strong style={{ color: "var(--primary)" }}>How scoring works:</strong> Each opportunity is scored by matching keywords like python, backend, intern, remote, fellowship, open source against the title, organization and tags. Curated sources and paid stipends get bonus points.
-          Full semantic AI matching with your actual resume and skills profile is coming in Phase 11.
-        </div>
-      </div>
+      {feedback && <div className="alert alert-success action-alert" role="status">{feedback}</div>}
+      {errorMessage && <div className="alert alert-error action-alert" role="alert">{errorMessage}</div>}
 
       {isLoading ? (
-        <div style={{ display: "grid", gap: 8 }}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} style={{ height: 80, borderRadius: 12, background: "var(--bg-2)", border: "1px solid var(--border)", opacity: 1 - i * 0.1 }} />
+        <div className="opportunity-list" aria-label="Loading recommendations">
+          {Array.from({ length: 5 }, (_, index) => <div className="skeleton opportunity-skeleton" key={index} />)}
+        </div>
+      ) : isError ? (
+        <div className="panel empty-state">
+          <div><span className="empty-icon"><Sparkles size={18} aria-hidden="true" /></span><p className="empty-title">Your picks aren’t available right now.</p><p className="empty-copy">Check your connection and try again.</p><button className="button button-secondary empty-action" onClick={() => refetch()}>Try again</button></div>
+        </div>
+      ) : data?.length ? (
+        <div className="opportunity-list">
+          {data.map((opportunity, index) => (
+            <article className={`opportunity-card ai-opportunity${index < 3 ? " ai-opportunity-featured" : ""}`} key={opportunity.id} style={{ animationDelay: `${Math.min(index, 7) * 35}ms` }}>
+              <span className={`rank-number${index < 3 ? " rank-highlight" : ""}`}>{String(index + 1).padStart(2, "0")}</span>
+              <div className="opportunity-mark" aria-hidden="true">{opportunity.organization.trim().slice(0, 1).toUpperCase() || <BriefcaseBusiness size={16} />}</div>
+              <div className="opportunity-main">
+                <div className="opportunity-title-line">
+                  <a className="opportunity-title" href={opportunity.url} rel="noreferrer noopener" target="_blank">{opportunity.title}</a>
+                  {index < 3 && <span className="tag tag-green">Strong match</span>}
+                  {opportunity.is_remote && <span className="tag">Remote</span>}
+                </div>
+                <div className="opportunity-details">
+                  <span>{opportunity.organization}</span>
+                  {opportunity.location && <span><MapPin size={11} aria-hidden="true" /> {opportunity.location}</span>}
+                  {opportunity.stipend && <span className="opportunity-stipend">{opportunity.stipend}</span>}
+                  {opportunity.deadline && <span className="tag tag-amber">Deadline {opportunity.deadline}</span>}
+                </div>
+              </div>
+              <div className="opportunity-actions">
+                <button className="button button-quiet" disabled={saving === opportunity.id + "saved"} onClick={() => handleAction(opportunity, "saved")} type="button">
+                  <ArrowDownToLine size={14} aria-hidden="true" /> {saving === opportunity.id + "saved" ? "Saving…" : "Save"}
+                </button>
+                <button className="button" disabled={saving === opportunity.id + "applied"} onClick={() => handleAction(opportunity, "applied")} type="button">
+                  {saving === opportunity.id + "applied" ? "Adding…" : "Track role"}
+                </button>
+              </div>
+            </article>
           ))}
         </div>
       ) : (
-        <div style={{ display: "grid", gap: 6 }}>
-          {data?.map((opp, idx) => (
-            <div key={opp.id} style={{ padding: "14px 18px", borderRadius: 12, border: idx < 3 ? "1px solid var(--primary-glow)" : "1px solid var(--border)", background: idx < 3 ? "rgba(124,111,255,0.04)" : "var(--bg-2)", display: "flex", alignItems: "center", gap: 16, transition: "border-color 0.15s" }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: idx < 3 ? "var(--primary)" : "var(--text-3)", width: 20, textAlign: "center", flexShrink: 0 }}>#{idx + 1}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                  <a href={opp.url} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", textDecoration: "none" }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "var(--primary)"}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text)"}>
-                    {opp.title}
-                  </a>
-                  {opp.is_remote && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "var(--primary-dim)", color: "var(--primary)", border: "1px solid var(--primary-glow)" }}>Remote</span>}
-                  {idx < 3 && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "var(--success-dim)", color: "var(--success)", border: "1px solid rgba(52,211,153,0.2)" }}>Top Pick</span>}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 12, color: "var(--text-2)" }}>{opp.organization}</span>
-                  {opp.stipend && <span style={{ fontSize: 11, color: "var(--success)" }}>· {opp.stipend}</span>}
-                  {opp.deadline && <span style={{ fontSize: 11, color: "var(--warning)" }}>· Deadline: {opp.deadline}</span>}
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                <button onClick={() => handleAction(opp, "saved")} disabled={saving === opp.id + "saved"}
-                  style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-2)", fontSize: 12, cursor: "pointer" }}>
-                  {saving === opp.id + "saved" ? "..." : "Save"}
-                </button>
-                <button onClick={() => handleAction(opp, "applied")} disabled={saving === opp.id + "applied"}
-                  style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "var(--primary)", color: "white", fontSize: 12, cursor: "pointer", fontWeight: 500 }}>
-                  {saving === opp.id + "applied" ? "..." : "Applied ✓"}
-                </button>
-              </div>
-            </div>
-          ))}
+        <div className="panel empty-state">
+          <div>
+            <span className="empty-icon"><Sparkles size={18} aria-hidden="true" /></span>
+            <p className="empty-title">Your next match starts with your profile.</p>
+            <p className="empty-copy">Add skills and target roles so Career Agent can surface opportunities that better fit your direction.</p>
+            <Link className="button button-secondary empty-action" href="/dashboard/profile">Add your interests <ArrowRight size={14} aria-hidden="true" /></Link>
+          </div>
         </div>
       )}
     </div>

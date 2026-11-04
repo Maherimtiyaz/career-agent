@@ -1,7 +1,10 @@
-﻿"use client";
+"use client";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ArrowRight, BriefcaseBusiness, Check, Compass, Sparkles } from "lucide-react";
+import axios from "axios";
 import { login } from "@/lib/auth";
 
 export default function LoginPage() {
@@ -11,49 +14,88 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true); setError("");
-    try { await login(email, password); router.push("/dashboard"); }
-    catch { setError("Invalid email or password"); }
-    finally { setLoading(false); }
+    setLoading(true);
+    setError("");
+    try {
+      await login(email, password);
+      router.push("/dashboard");
+    } catch (requestError: unknown) {
+      setError(
+        axios.isAxiosError(requestError) && !requestError.response
+          ? "We couldn’t reach Career Agent. Check your connection and try again."
+          : "We couldn’t sign you in with those details. Please try again.",
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
-  const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-3)", color: "var(--text)", fontSize: 14, outline: "none", transition: "border-color 0.15s" };
-
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}>
-      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 50% 0%, rgba(124,111,255,0.08) 0%, transparent 70%)", pointerEvents: "none" }} />
-      <div style={{ width: "100%", maxWidth: 400, padding: "0 24px", position: "relative" }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 14, background: "linear-gradient(135deg, var(--primary), #a78bfa)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, margin: "0 auto 16px" }}>✦</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--text)", margin: 0, letterSpacing: "-0.02em" }}>Welcome back</h1>
-          <p style={{ color: "var(--text-2)", fontSize: 14, marginTop: 6 }}>Sign in to Career Agent</p>
+    <main className="auth-layout">
+      <aside className="auth-aside">
+        <Link className="auth-brand" href="/" aria-label="Career Agent home">
+          <span className="brand-icon"><Sparkles size={17} aria-hidden="true" /></span>
+          <span>Career Agent</span>
+        </Link>
+        <div className="auth-copy">
+          <div className="eyebrow">A workspace for what&apos;s next</div>
+          <h1>Your next<br />chapter starts <span>here.</span></h1>
+          <p>Turn the job search into a journey you can actually navigate. Find opportunities, keep your momentum, and stay ready for the right one.</p>
         </div>
-        <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, padding: 28 }}>
-          {error && <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: 8, background: "var(--danger-dim)", color: "var(--danger)", fontSize: 13, border: "1px solid rgba(248,113,113,0.2)" }}>{error}</div>}
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-2)", marginBottom: 6 }}>Email</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} style={inputStyle} placeholder="you@example.com" required
-                onFocus={e => (e.target as HTMLInputElement).style.borderColor = "var(--primary)"}
-                onBlur={e => (e.target as HTMLInputElement).style.borderColor = "var(--border)"} />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-2)", marginBottom: 6 }}>Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} style={inputStyle} placeholder="••••••••" required
-                onFocus={e => (e.target as HTMLInputElement).style.borderColor = "var(--primary)"}
-                onBlur={e => (e.target as HTMLInputElement).style.borderColor = "var(--border)"} />
-            </div>
-            <button type="submit" disabled={loading} style={{ padding: "11px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 14, fontWeight: 600, border: "none", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1, marginTop: 4, transition: "opacity 0.15s", letterSpacing: "-0.01em" }}>
-              {loading ? "Signing in..." : "Sign in →"}
-            </button>
-          </form>
+        <div className="auth-proof">
+          <span className="proof-pill"><Compass size={13} aria-hidden="true" /> Discover opportunities</span>
+          <span className="proof-pill"><BriefcaseBusiness size={13} aria-hidden="true" /> Track your progress</span>
+          <span className="proof-pill"><Check size={13} aria-hidden="true" /> Made for students</span>
         </div>
-        <p style={{ textAlign: "center", fontSize: 13, color: "var(--text-3)", marginTop: 20 }}>
-          No account?{" "}<Link href="/register" style={{ color: "var(--primary)", textDecoration: "none" }}>Create one free</Link>
-        </p>
-      </div>
-    </div>
+      </aside>
+
+      <section className="auth-main">
+        <div className="auth-card-wrap">
+          <Link className="auth-mobile-brand" href="/">
+            <span className="brand-icon"><Sparkles size={16} aria-hidden="true" /></span>
+            Career Agent
+          </Link>
+          <h2 className="auth-heading">Welcome back</h2>
+          <p className="auth-subheading">Sign in to pick up where your next chapter begins.</p>
+          <div className="auth-card">
+            {error && <div className="alert alert-error" role="alert">{error}</div>}
+            <form className="auth-form" onSubmit={handleSubmit}>
+              <div className="field-wrap">
+                <label className="field-label" htmlFor="login-email">Email address</label>
+                <input
+                  autoComplete="email"
+                  className="field"
+                  id="login-email"
+                  onChange={event => setEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  type="email"
+                  value={email}
+                />
+              </div>
+              <div className="field-wrap">
+                <label className="field-label" htmlFor="login-password">Password</label>
+                <input
+                  autoComplete="current-password"
+                  className="field"
+                  id="login-password"
+                  onChange={event => setPassword(event.target.value)}
+                  placeholder="Enter your password"
+                  required
+                  type="password"
+                  value={password}
+                />
+              </div>
+              <button className="button auth-submit" disabled={loading} type="submit">
+                {loading ? "Signing you in…" : <>Sign in <ArrowRight size={15} aria-hidden="true" /></>}
+              </button>
+            </form>
+          </div>
+          <p className="auth-footnote">New to Career Agent? <Link href="/register">Create your free account</Link></p>
+        </div>
+      </section>
+    </main>
   );
 }

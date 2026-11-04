@@ -1,6 +1,8 @@
 "use client";
+
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowDownToLine, ArrowRight, Check, Database, RefreshCw, Sheet } from "lucide-react";
 import api from "@/lib/api";
 
 interface ScrapeResult {
@@ -9,115 +11,104 @@ interface ScrapeResult {
   error?: string;
 }
 
+interface SheetImportResult {
+  inserted: number;
+  skipped: number;
+}
+
 export default function ImportPage() {
   const qc = useQueryClient();
   const [url, setUrl] = useState("");
-  const [sheetLoading, setSheetLoading] = useState(false);
-  const [sheetResult, setSheetResult] = useState<{ inserted: number; skipped: number } | null>(null);
+  const [sheetResult, setSheetResult] = useState<SheetImportResult | null>(null);
   const [sheetError, setSheetError] = useState("");
-  const [scrapeResults, setScrapeResults] = useState<ScrapeResult[] | null>(null);
 
   const scrapeMutation = useMutation({
     mutationFn: () => api.post("/ingestion/run?source=all"),
-    onSuccess: (res) => {
-      setScrapeResults(res.data.results);
+    onSuccess: response => {
       qc.invalidateQueries({ queryKey: ["opportunities"] });
       qc.invalidateQueries({ queryKey: ["analytics"] });
       qc.invalidateQueries({ queryKey: ["ai-recommendations"] });
+      return response;
     },
   });
 
-  async function handleSheetImport() {
-    if (!url.trim()) return;
-    setSheetLoading(true);
-    setSheetError("");
-    setSheetResult(null);
-    try {
-      const res = await api.post("/sheet/import", { sheet_url: url });
-      setSheetResult(res.data);
+  const sheetMutation = useMutation({
+    mutationFn: (sheetUrl: string) => api.post<SheetImportResult>("/sheet/import", { sheet_url: sheetUrl }),
+    onSuccess: response => {
+      setSheetResult(response.data);
+      setSheetError("");
       qc.invalidateQueries({ queryKey: ["applications"] });
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setSheetError(msg ?? "Import failed");
-    } finally {
-      setSheetLoading(false);
-    }
-  }
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
+    onError: (requestError: unknown) => {
+      const detail = (requestError as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      setSheetError(typeof detail === "string" ? detail : "The sheet couldn’t be imported. Check the link and try again.");
+      setSheetResult(null);
+    },
+  });
 
-  const totalInserted = scrapeResults?.reduce((a, r) => a + (r.inserted ?? 0), 0) ?? 0;
+  const scrapeResults = scrapeMutation.data?.data?.results as ScrapeResult[] | undefined;
+  const totalInserted = scrapeResults?.reduce((total, result) => total + (result.inserted ?? 0), 0) ?? 0;
+  const sourceNames = ["GSoC", "YC Jobs", "MLH Fellowship", "Devfolio"];
 
   return (
-    <div style={{ padding: "32px 40px", maxWidth: 720 }}>
-      <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>Data Sources</h1>
-        <p style={{ color: "var(--text-2)", fontSize: 13, marginTop: 4 }}>Refresh live data or import your personal tracker</p>
+    <div className="page-wrap">
+      <header className="page-head">
+        <div><div className="eyebrow">Keep your data connected</div><h1 className="page-title">Data sources</h1><p className="page-description">Bring fresh opportunities and your existing tracker into Career Agent.</p></div>
+        <span className="page-context"><Database size={14} aria-hidden="true" /> Connected to your workspace</span>
+      </header>
+
+      <div className="source-grid">
+        <section className="panel source-card">
+          <div className="source-card-top">
+            <span className="source-icon"><RefreshCw size={17} aria-hidden="true" /></span>
+            <span className="source-status"><span className="source-status-dot" /> Scheduled daily</span>
+          </div>
+          <div className="source-section-label">Opportunity discovery</div>
+          <h2 className="source-title">Live platform sources</h2>
+          <p className="source-description">Refresh opportunities from student programs, startup listings, and hackathon platforms. Scheduled refreshes run every 24 hours.</p>
+          <div className="source-tags">{sourceNames.map(name => <span className="tag" key={name}>{name}</span>)}</div>
+          <button className="button source-action" disabled={scrapeMutation.isPending} onClick={() => scrapeMutation.mutate()} type="button">
+            <RefreshCw size={14} aria-hidden="true" /> {scrapeMutation.isPending ? "Refreshing sources…" : "Refresh sources"}
+          </button>
+          {scrapeMutation.isError && <div className="alert alert-error source-feedback" role="alert">We couldn’t refresh the sources. Check your connection and try again.</div>}
+          {scrapeResults && (
+            <div className={`source-results${scrapeResults.some(result => result.error) ? " source-results-warning" : ""}`} role="status">
+              <div className="source-results-summary">
+                <span className="source-results-icon">{scrapeResults.some(result => result.error) ? <Database size={15} /> : <Check size={15} />}</span>
+                <span>{totalInserted ? `${totalInserted} new ${totalInserted === 1 ? "opportunity" : "opportunities"} added` : "Sources are up to date"}</span>
+              </div>
+              <div className="source-result-list">
+                {scrapeResults.map(result => <div className="source-result-row" key={result.source}><span>{result.source}</span><span className={result.error ? "result-error" : "result-count"}>{result.error ? "Unavailable" : `+${result.inserted}`}</span></div>)}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="panel source-card">
+          <div className="source-card-top">
+            <span className="source-icon source-icon-blue"><Sheet size={17} aria-hidden="true" /></span>
+            <span className="source-status source-status-neutral">Personal tracker</span>
+          </div>
+          <div className="source-section-label">Bring your own data</div>
+          <h2 className="source-title">Import a Google Sheet</h2>
+          <p className="source-description">Move an existing application tracker into your workspace. Your sheet needs to be shared as “Anyone with the link can view.”</p>
+          <div className="sheet-requirements"><span>Required columns</span><code>company</code><code>role</code></div>
+          <form className="sheet-import-form" onSubmit={event => { event.preventDefault(); sheetMutation.mutate(url.trim()); }}>
+            <label className="field-wrap" htmlFor="sheet-url">
+              <span className="field-label">Google Sheets link</span>
+              <input autoComplete="url" className="field" id="sheet-url" onChange={event => { setUrl(event.target.value); setSheetError(""); }} placeholder="https://docs.google.com/spreadsheets/…" required type="url" value={url} />
+            </label>
+            <button className="button" disabled={sheetMutation.isPending || !url.trim()} type="submit">
+              {sheetMutation.isPending ? "Importing…" : <><ArrowDownToLine size={14} aria-hidden="true" /> Import tracker</>}
+            </button>
+          </form>
+          {sheetError && <div className="alert alert-error source-feedback" role="alert">{sheetError}</div>}
+          {sheetResult && <div className="alert alert-success source-feedback" role="status"><Check size={14} aria-hidden="true" /> {sheetResult.inserted} {sheetResult.inserted === 1 ? "row" : "rows"} added, {sheetResult.skipped} skipped.</div>}
+        </section>
       </div>
 
-      <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, padding: 24, marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Live Platform Scrapers</div>
-            <p style={{ fontSize: 12, color: "var(--text-2)", margin: 0, lineHeight: 1.6 }}>
-              Fetch fresh opportunities from GSoC, YC Jobs, MLH and Devfolio. Runs automatically every 24 hours.
-            </p>
-            <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
-              {["GSoC", "YC Jobs", "MLH", "Devfolio"].map(s => (
-                <span key={s} style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, background: "var(--primary-dim)", color: "var(--primary)", border: "1px solid var(--primary-glow)" }}>{s}</span>
-              ))}
-            </div>
-          </div>
-          <button
-            onClick={() => { setScrapeResults(null); scrapeMutation.mutate(); }}
-            disabled={scrapeMutation.isPending}
-            style={{ padding: "9px 18px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 13, fontWeight: 500, border: "none", cursor: scrapeMutation.isPending ? "not-allowed" : "pointer", opacity: scrapeMutation.isPending ? 0.7 : 1, whiteSpace: "nowrap", flexShrink: 0 }}>
-            {scrapeMutation.isPending ? "Scraping..." : "Refresh Now"}
-          </button>
-        </div>
-        {scrapeResults && (
-          <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 10, background: totalInserted > 0 ? "var(--success-dim)" : "var(--bg-3)", border: "1px solid var(--border)" }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: totalInserted > 0 ? "var(--success)" : "var(--text-2)", marginBottom: 8 }}>
-              {totalInserted > 0 ? "Added " + totalInserted + " new opportunities" : "All sources up to date"}
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 6 }}>
-              {scrapeResults.map(r => (
-                <div key={r.source} style={{ fontSize: 11, color: "var(--text-2)", display: "flex", justifyContent: "space-between", padding: "4px 8px", borderRadius: 6, background: "rgba(255,255,255,0.04)" }}>
-                  <span>{r.source}</span>
-                  <span style={{ color: r.error ? "var(--danger)" : r.inserted > 0 ? "var(--success)" : "var(--text-3)" }}>
-                    {r.error ? "error" : "+" + r.inserted}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, padding: 24 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Import from Google Sheet</div>
-        <p style={{ fontSize: 12, color: "var(--text-2)", margin: "0 0 16px", lineHeight: 1.6 }}>
-          Sync your personal tracker. Sheet must be shared as Anyone with the link can view. Required columns: company, role.
-        </p>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..."
-            style={{ flex: 1, padding: "9px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-3)", color: "var(--text)", fontSize: 13, outline: "none" }}
-            onFocus={e => (e.target as HTMLInputElement).style.borderColor = "var(--primary)"}
-            onBlur={e => (e.target as HTMLInputElement).style.borderColor = "var(--border)"} />
-          <button onClick={handleSheetImport} disabled={sheetLoading || !url.trim()}
-            style={{ padding: "9px 18px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 13, fontWeight: 500, border: "none", cursor: "pointer", opacity: sheetLoading || !url.trim() ? 0.6 : 1 }}>
-            {sheetLoading ? "Importing..." : "Import"}
-          </button>
-        </div>
-        {sheetResult && (
-          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "var(--success-dim)", fontSize: 12, color: "var(--success)" }}>
-            {sheetResult.inserted} rows added, {sheetResult.skipped} skipped
-          </div>
-        )}
-        {sheetError && (
-          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 8, background: "var(--danger-dim)", fontSize: 12, color: "var(--danger)" }}>
-            {sheetError}
-          </div>
-        )}
-      </div>
+      <div className="source-note"><ArrowRight size={14} aria-hidden="true" /><span>Newly imported applications are added to your tracker and reflected in Analytics.</span></div>
     </div>
   );
 }

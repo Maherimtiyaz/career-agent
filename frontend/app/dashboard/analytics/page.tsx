@@ -1,158 +1,159 @@
-﻿"use client";
+"use client";
+
 import { useQuery } from "@tanstack/react-query";
+import {
+  Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
+import { BarChart3, BriefcaseBusiness, Compass, Percent, Sparkles } from "lucide-react";
 import api from "@/lib/api";
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from "recharts";
+
+interface AnalyticsData {
+  total_applications: number;
+  total_opportunities: number;
+  response_rate: number;
+  by_status: { status: string; count: number }[];
+  by_source: { source: string; count: number }[];
+  timeline: { month: string; count: number }[];
+  remote_split: { remote: boolean; count: number }[];
+}
 
 const STATUS_COLORS: Record<string, string> = {
-  applied: "#60a5fa",
-  interviewing: "#fbbf24",
-  offer: "#34d399",
-  rejected: "#f87171",
-  saved: "#9090a8",
+  applied: "#8bc4ef",
+  interviewing: "#edc979",
+  offer: "#82d9a2",
+  rejected: "#f08a82",
+  saved: "#859187",
 };
+const SOURCE_COLORS = ["#c4f06b", "#8bc4ef", "#82d9a2", "#edc979", "#c5a5ef", "#f08a82"];
+const tooltipStyle = { background: "#18201b", border: "1px solid rgba(224,240,228,.14)", borderRadius: 10, color: "#eef4ed", fontSize: 11 };
 
-const SOURCE_COLORS = ["#7c6fff", "#60a5fa", "#34d399", "#fbbf24", "#f87171", "#a78bfa"];
-
-function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
+function StatCard({ label, value, icon: Icon, tone }: {
+  label: string;
+  value: string | number;
+  icon: typeof BriefcaseBusiness;
+  tone: string;
+}) {
   return (
-    <div style={{ padding: "20px 24px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--bg-2)" }}>
-      <div style={{ fontSize: 28, fontWeight: 700, color: color ?? "var(--text)", letterSpacing: "-0.02em" }}>{value}</div>
-      <div style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4 }}>{label}</div>
-      {sub && <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>{sub}</div>}
-    </div>
+    <article className="analytics-stat">
+      <span className={`stat-icon ${tone}`}><Icon size={16} aria-hidden="true" /></span>
+      <span className="analytics-stat-value">{value}</span>
+      <span className="analytics-stat-label">{label}</span>
+    </article>
   );
 }
 
-const tooltipStyle = { background: "var(--bg-3)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", fontSize: 12 };
+function ChartEmpty({ children }: { children: string }) {
+  return <div className="chart-empty"><span className="empty-icon"><BarChart3 size={17} aria-hidden="true" /></span><span>{children}</span></div>;
+}
 
 export default function AnalyticsPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["analytics"],
-    queryFn: async () => (await api.get("/analytics/summary")).data,
+    queryFn: async () => (await api.get<AnalyticsData>("/analytics/summary")).data,
   });
 
-  if (isLoading) return (
-    <div style={{ padding: "32px 40px" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 24px", letterSpacing: "-0.02em" }}>Analytics</h1>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 24 }}>
-        {Array.from({ length: 4 }).map((_, i) => <div key={i} style={{ height: 90, borderRadius: 14, background: "var(--bg-2)", border: "1px solid var(--border)" }} />)}
-      </div>
-    </div>
-  );
+  if (isLoading) {
+    return <div className="page-wrap"><div className="page-head"><div><div className="eyebrow">Your progress</div><h1 className="page-title">Analytics</h1></div></div><div className="stat-grid">{Array.from({ length: 4 }, (_, index) => <div className="skeleton analytics-skeleton" key={index} />)}</div><div className="split-grid analytics-skeleton-grid"><div className="skeleton chart-skeleton" /><div className="skeleton chart-skeleton" /></div></div>;
+  }
 
-  const byStatus: { status: string; count: number }[] = data?.by_status ?? [];
-  const bySource: { source: string; count: number }[] = data?.by_source ?? [];
-  const timeline: { month: string; count: number }[] = data?.timeline ?? [];
-  const remoteSplit: { remote: boolean; count: number }[] = data?.remote_split ?? [];
+  if (isError || !data) {
+    return <div className="page-wrap"><header className="page-head"><div><div className="eyebrow">Your progress</div><h1 className="page-title">Analytics</h1><p className="page-description">A clear view of your search over time.</p></div></header><div className="panel empty-state"><div><span className="empty-icon"><BarChart3 size={18} aria-hidden="true" /></span><p className="empty-title">Your analytics couldn’t load.</p><p className="empty-copy">Check your connection and try again.</p><button className="button button-secondary empty-action" onClick={() => refetch()}>Try again</button></div></div></div>;
+  }
 
-  const remoteCount = remoteSplit.find(r => r.remote)?.count ?? 0;
-  const onsiteCount = remoteSplit.find(r => !r.remote)?.count ?? 0;
-  const remoteData = [
-    { name: "Remote", value: remoteCount },
-    { name: "On-site", value: onsiteCount },
-  ];
+  const byStatus = data.by_status ?? [];
+  const bySource = data.by_source ?? [];
+  const timeline = data.timeline ?? [];
+  const remoteSplit = data.remote_split ?? [];
+  const remoteCount = remoteSplit.find(item => item.remote)?.count ?? 0;
+  const onsiteCount = remoteSplit.find(item => !item.remote)?.count ?? 0;
+  const remoteData = [{ name: "Remote", value: remoteCount }, { name: "On-site", value: onsiteCount }];
+  const hasRemoteData = remoteData.some(item => item.value > 0);
 
   return (
-    <div style={{ padding: "32px 40px", maxWidth: 1000 }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>Analytics</h1>
-        <p style={{ color: "var(--text-2)", fontSize: 13, marginTop: 4 }}>Your career activity at a glance</p>
-      </div>
+    <div className="page-wrap">
+      <header className="page-head">
+        <div><div className="eyebrow">Your progress</div><h1 className="page-title">Analytics</h1><p className="page-description">A clearer view of where your career search is going.</p></div>
+        <span className="page-context"><Sparkles size={14} aria-hidden="true" /> Your activity, at a glance</span>
+      </header>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 28 }}>
-        <StatCard label="Total Applications" value={data?.total_applications ?? 0} color="var(--blue)" />
-        <StatCard label="Response Rate" value={(data?.response_rate ?? 0) + "%"} sub="Interviewing + Offers / Total" color="var(--success)" />
-        <StatCard label="Opportunities" value={(data?.total_opportunities ?? 0).toLocaleString()} color="var(--primary)" />
-        <StatCard label="Offers" value={byStatus.find(s => s.status === "offer")?.count ?? 0} color="var(--warning)" />
-      </div>
+      <section className="stat-grid analytics-stat-grid" aria-label="Career search metrics">
+        <StatCard label="Applications" value={data.total_applications.toLocaleString()} icon={BriefcaseBusiness} tone="tone-blue" />
+        <StatCard label="Response rate" value={`${data.response_rate}%`} icon={Percent} tone="tone-green" />
+        <StatCard label="Opportunities" value={data.total_opportunities.toLocaleString()} icon={Compass} tone="tone-violet" />
+        <StatCard label="Offers" value={(byStatus.find(item => item.status === "offer")?.count ?? 0).toLocaleString()} icon={Sparkles} tone="tone-amber" />
+      </section>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-
-        <div style={{ padding: "20px 24px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--bg-2)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 20 }}>Applications by Status</div>
-          {byStatus.length === 0 ? (
-            <div style={{ textAlign: "center", color: "var(--text-3)", fontSize: 13, padding: "32px 0" }}>No applications yet</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <PieChart>
-                <Pie data={byStatus} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={75} innerRadius={45}>
-                  {byStatus.map(entry => (
-                    <Cell key={entry.status} fill={STATUS_COLORS[entry.status] ?? "#666"} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={tooltipStyle} formatter={(v, n) => [v, n]} />
-              </PieChart>
-            </ResponsiveContainer>
+      <section className="analytics-grid">
+        <article className="panel chart-panel">
+          <div className="chart-heading"><div><h2 className="section-title">Applications by status</h2><p className="section-caption">See how each opportunity is progressing.</p></div></div>
+          {byStatus.length === 0 ? <ChartEmpty>Track an application to see your progress here.</ChartEmpty> : (
+            <div className="chart-frame">
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie data={byStatus} dataKey="count" nameKey="status" cx="50%" cy="50%" innerRadius={56} outerRadius={83} paddingAngle={3} stroke="none">
+                    {byStatus.map(item => <Cell key={item.status} fill={STATUS_COLORS[item.status] ?? "#859187"} />)}
+                  </Pie>
+                  <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => [value, name]} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           )}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", marginTop: 12 }}>
-            {byStatus.map(s => (
-              <div key={s.status} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-2)" }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLORS[s.status] ?? "#666" }} />
-                {s.status} ({s.count})
+          {byStatus.length > 0 && <div className="chart-legend">{byStatus.map(item => <span className="legend-item" key={item.status}><i style={{ background: STATUS_COLORS[item.status] ?? "#859187" }} />{item.status}<strong>{item.count}</strong></span>)}</div>}
+        </article>
+
+        <article className="panel chart-panel">
+          <div className="chart-heading"><div><h2 className="section-title">Opportunities by source</h2><p className="section-caption">Where the roles in your workspace come from.</p></div></div>
+          {bySource.length === 0 ? <ChartEmpty>Opportunity sources will appear once data is available.</ChartEmpty> : (
+            <div className="chart-frame">
+              <ResponsiveContainer width="100%" height={235}>
+                <BarChart data={bySource} layout="vertical" margin={{ left: 10, right: 12, top: 4, bottom: 4 }}>
+                  <XAxis type="number" tick={{ fill: "#829085", fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="source" tick={{ fill: "#a0ada2", fontSize: 10 }} axisLine={false} tickLine={false} width={90} />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={15}>{bySource.map((item, index) => <Cell key={item.source} fill={SOURCE_COLORS[index % SOURCE_COLORS.length]} />)}</Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </article>
+
+        <article className="panel chart-panel chart-panel-wide">
+          <div className="chart-heading"><div><h2 className="section-title">Application activity</h2><p className="section-caption">Your application activity over time.</p></div></div>
+          {timeline.length === 0 ? <ChartEmpty>Your activity timeline will take shape as you track applications.</ChartEmpty> : (
+            <div className="chart-frame">
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={timeline} margin={{ left: -16, right: 12, top: 10, bottom: 2 }}>
+                  <CartesianGrid stroke="rgba(224,240,228,.08)" strokeDasharray="4 5" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fill: "#829085", fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#829085", fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Line activeDot={{ r: 5, fill: "#c4f06b", stroke: "#18201b" }} dataKey="count" dot={{ r: 3, fill: "#c4f06b", stroke: "#18201b", strokeWidth: 2 }} stroke="#c4f06b" strokeWidth={2} type="monotone" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </article>
+
+        <article className="panel chart-panel">
+          <div className="chart-heading"><div><h2 className="section-title">Remote vs on-site</h2><p className="section-caption">How opportunity formats break down.</p></div></div>
+          {!hasRemoteData ? <ChartEmpty>No location data is available yet.</ChartEmpty> : (
+            <>
+              <div className="chart-frame">
+                <ResponsiveContainer width="100%" height={210}>
+                  <PieChart>
+                    <Pie data={remoteData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={54} outerRadius={79} paddingAngle={3} stroke="none">
+                      <Cell fill="#c4f06b" /><Cell fill="#354039" />
+                    </Pie>
+                    <Tooltip contentStyle={tooltipStyle} />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ padding: "20px 24px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--bg-2)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 20 }}>Opportunities by Source</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={bySource} layout="vertical" margin={{ left: 20, right: 20 }}>
-              <XAxis type="number" tick={{ fill: "var(--text-3)", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="source" tick={{ fill: "var(--text-2)", fontSize: 11 }} axisLine={false} tickLine={false} width={80} />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="count" radius={[0, 6, 6, 0]}>
-                {bySource.map((_, i) => <Cell key={i} fill={SOURCE_COLORS[i % SOURCE_COLORS.length]} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-
-        <div style={{ padding: "20px 24px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--bg-2)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 20 }}>Application Activity Over Time</div>
-          {timeline.length === 0 ? (
-            <div style={{ textAlign: "center", color: "var(--text-3)", fontSize: 13, padding: "32px 0" }}>No data yet — start tracking applications</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={timeline}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="month" tick={{ fill: "var(--text-3)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: "var(--text-3)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Line type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={{ fill: "var(--primary)", r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
+              <div className="remote-legend"><span><i className="legend-remote" />Remote<strong>{remoteCount.toLocaleString()}</strong></span><span><i className="legend-onsite" />On-site<strong>{onsiteCount.toLocaleString()}</strong></span></div>
+            </>
           )}
-        </div>
-
-        <div style={{ padding: "20px 24px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--bg-2)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 20 }}>Remote vs On-site</div>
-          <ResponsiveContainer width="100%" height={180}>
-            <PieChart>
-              <Pie data={remoteData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} innerRadius={40}>
-                <Cell fill="var(--primary)" />
-                <Cell fill="var(--bg-4, #2a2a38)" />
-              </Pie>
-              <Tooltip contentStyle={tooltipStyle} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-2)" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--primary)", display: "inline-block" }} />Remote</span>
-              <span>{remoteCount.toLocaleString()}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-2)" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: "#2a2a38", border: "1px solid var(--border)", display: "inline-block" }} />On-site</span>
-              <span>{onsiteCount.toLocaleString()}</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
+        </article>
+      </section>
     </div>
   );
 }

@@ -1,96 +1,141 @@
-﻿"use client";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getMe } from "@/lib/auth";
-import api from "@/lib/api";
-import type { User, Application } from "@/types";
-import Link from "next/link";
+"use client";
 
-const STATUS_COLOR: Record<string, string> = {
-  applied: "var(--blue)", interviewing: "var(--warning)", offer: "var(--success)", rejected: "var(--danger)", saved: "var(--text-3)",
+import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, BarChart3, BriefcaseBusiness, Compass, Sparkles } from "lucide-react";
+import api from "@/lib/api";
+import { getMe } from "@/lib/auth";
+import type { Application } from "@/types";
+
+interface AnalyticsSummary {
+  total_applications: number;
+  total_opportunities: number;
+  response_rate: number;
+  by_status: { status: string; count: number }[];
+}
+
+const statusClass: Record<string, string> = {
+  applied: "status-blue",
+  interviewing: "status-warning",
+  offer: "status-success",
+  rejected: "status-danger",
+  saved: "status-neutral",
 };
 
+function StatCard({ label, value, icon: Icon, tone, href }: {
+  label: string;
+  value: number | string;
+  icon: typeof Compass;
+  tone: string;
+  href: string;
+}) {
+  return (
+    <Link className="stat-card" href={href}>
+      <span className={`stat-icon ${tone}`}><Icon size={17} aria-hidden="true" /></span>
+      <span className="stat-value">{value}</span>
+      <span className="stat-label">{label}</span>
+      <ArrowRight className="stat-arrow" size={14} aria-hidden="true" />
+    </Link>
+  );
+}
+
 export default function DashboardPage() {
-  const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
-  const [apps, setApps] = useState<Application[]>([]);
-  const [oppCount, setOppCount] = useState(0);
+  const userQuery = useQuery({ queryKey: ["me"], queryFn: getMe });
+  const applicationsQuery = useQuery({
+    queryKey: ["applications"],
+    queryFn: async () => (await api.get<Application[]>("/applications")).data,
+  });
+  const summaryQuery = useQuery({
+    queryKey: ["analytics"],
+    queryFn: async () => (await api.get<AnalyticsSummary>("/analytics/summary")).data,
+  });
 
-  useEffect(() => {
-    if (!localStorage.getItem("access_token")) { router.push("/login"); return; }
-    getMe().then(setUser).catch(() => router.push("/login"));
-    api.get<Application[]>("/applications").then(r => setApps(r.data)).catch(() => {});
-    api.get("/opportunities?limit=200").then(r => setOppCount(r.data.length)).catch(() => {});
-  }, [router]);
-
-  const byStatus = (s: string) => apps.filter(a => a.status === s).length;
-
-  const stats = [
-    { label: "Opportunities", value: oppCount, icon: "◈", color: "var(--primary)", dim: "var(--primary-dim)", href: "/dashboard/opportunities" },
-    { label: "Applications", value: apps.length, icon: "◎", color: "var(--blue)", dim: "var(--blue-dim)", href: "/dashboard/applications" },
-    { label: "Interviewing", value: byStatus("interviewing"), icon: "◑", color: "var(--warning)", dim: "var(--warning-dim)", href: "/dashboard/applications" },
-    { label: "Offers", value: byStatus("offer"), icon: "✦", color: "var(--success)", dim: "var(--success-dim)", href: "/dashboard/applications" },
-  ];
-
-  const recent = apps.slice(0, 5);
+  const user = userQuery.data;
+  const applications = applicationsQuery.data ?? [];
+  const summary = summaryQuery.data;
+  const statusCount = (status: string) => summary?.by_status.find(item => item.status === status)?.count ?? 0;
+  const loading = applicationsQuery.isLoading || summaryQuery.isLoading;
+  const error = userQuery.isError || applicationsQuery.isError || summaryQuery.isError;
+  const firstName = user?.full_name?.trim().split(/\s+/)[0];
 
   return (
-    <div style={{ padding: "32px 40px", maxWidth: 900 }}>
-      <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
-          {user?.full_name ? "Hey, " + user.full_name.split(" ")[0] + " 👋" : "Dashboard"}
-        </h1>
-        <p style={{ color: "var(--text-2)", fontSize: 14, marginTop: 4 }}>Your career at a glance</p>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 32 }}>
-        {stats.map(s => (
-          <Link key={s.label} href={s.href} style={{ textDecoration: "none", display: "block", padding: "18px 20px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--bg-2)", transition: "border-color 0.15s, background 0.15s" }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = s.color; (e.currentTarget as HTMLElement).style.background = s.dim; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.background = "var(--bg-2)"; }}>
-            <div style={{ fontSize: 20, marginBottom: 12, color: s.color }}>{s.icon}</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em" }}>{s.value}</div>
-            <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 2 }}>{s.label}</div>
-          </Link>
-        ))}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
-        <Link href="/dashboard/ai" style={{ textDecoration: "none", padding: "20px 22px", borderRadius: 14, border: "1px solid var(--primary-glow)", background: "var(--primary-dim)", display: "block", transition: "opacity 0.15s" }}
-          onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "0.8"}
-          onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "1"}>
-          <div style={{ fontSize: 18, marginBottom: 8 }}>✦</div>
-          <div style={{ fontWeight: 600, fontSize: 14, color: "var(--text)" }}>AI Recommendations</div>
-          <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 4 }}>Personalized picks based on your profile</div>
+    <div className="page-wrap">
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">Your workspace</div>
+          <h1 className="page-title">{firstName ? `Good to see you, ${firstName}.` : "A little more focus. A lot more momentum."}</h1>
+          <p className="page-description">Your career search, brought into view.</p>
+        </div>
+        <Link className="button button-secondary dashboard-analytics-link" href="/dashboard/analytics">
+          <BarChart3 size={15} aria-hidden="true" /> View insights
         </Link>
-        <Link href="/dashboard/import" style={{ textDecoration: "none", padding: "20px 22px", borderRadius: 14, border: "1px solid var(--border)", background: "var(--bg-2)", display: "block", transition: "border-color 0.15s" }}
-          onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = "var(--border-hover)"}
-          onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"}>
-          <div style={{ fontSize: 18, marginBottom: 8 }}>⤓</div>
-          <div style={{ fontWeight: 600, fontSize: 14, color: "var(--text)" }}>Import Google Sheet</div>
-          <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 4 }}>Sync your personal tracker</div>
-        </Link>
-      </div>
+      </header>
 
-      {recent.length > 0 && (
-        <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
-          <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Recent Applications</span>
-            <Link href="/dashboard/applications" style={{ fontSize: 12, color: "var(--primary)", textDecoration: "none" }}>View all →</Link>
-          </div>
-          {recent.map((app, i) => (
-            <div key={app.id} style={{ padding: "12px 20px", borderBottom: i < recent.length - 1 ? "1px solid var(--border)" : "none", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{app.role}</div>
-                <div style={{ fontSize: 12, color: "var(--text-2)", marginTop: 1 }}>{app.company}</div>
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 500, padding: "3px 8px", borderRadius: 6, background: "rgba(255,255,255,0.06)", color: STATUS_COLOR[app.status] ?? "var(--text-2)" }}>
-                {app.status}
-              </span>
-            </div>
-          ))}
+      {error && (
+        <div className="alert alert-error dashboard-alert" role="alert">
+          We couldn’t load all your workspace data. Refresh the page to try again.
         </div>
       )}
+
+      <section className="stat-grid" aria-label="Career search summary">
+        <StatCard label="Opportunities" value={loading ? "—" : (summary?.total_opportunities ?? 0).toLocaleString()} icon={Compass} tone="tone-green" href="/dashboard/opportunities" />
+        <StatCard label="Applications" value={loading ? "—" : (summary?.total_applications ?? applications.length).toLocaleString()} icon={BriefcaseBusiness} tone="tone-blue" href="/dashboard/applications" />
+        <StatCard label="Interviews" value={loading ? "—" : statusCount("interviewing")} icon={Sparkles} tone="tone-amber" href="/dashboard/applications" />
+        <StatCard label="Offers" value={loading ? "—" : statusCount("offer")} icon={ArrowRight} tone="tone-violet" href="/dashboard/applications" />
+      </section>
+
+      <section className="dashboard-journeys" aria-label="Continue your career search">
+        <Link className="journey-card journey-card-primary" href="/dashboard/ai">
+          <span className="journey-icon"><Sparkles size={18} aria-hidden="true" /></span>
+          <span className="journey-copy">
+            <span className="journey-title">Find your next opportunity</span>
+            <span className="journey-description">Explore roles matched to your interests and profile.</span>
+          </span>
+          <ArrowRight className="journey-arrow" size={16} aria-hidden="true" />
+        </Link>
+        <Link className="journey-card" href="/dashboard/applications">
+          <span className="journey-icon journey-icon-neutral"><BriefcaseBusiness size={18} aria-hidden="true" /></span>
+          <span className="journey-copy">
+            <span className="journey-title">Keep your search moving</span>
+            <span className="journey-description">Review applications and choose a clear next step.</span>
+          </span>
+          <ArrowRight className="journey-arrow" size={16} aria-hidden="true" />
+        </Link>
+      </section>
+
+      <section className="panel recent-panel">
+        <div className="panel-heading">
+          <div><h2 className="section-title">Recent applications</h2><p className="section-caption">A quick look at the roles you’re pursuing.</p></div>
+          <Link className="text-link" href="/dashboard/applications">View all <ArrowRight size={13} aria-hidden="true" /></Link>
+        </div>
+        {applicationsQuery.isLoading ? (
+          <div className="recent-loading"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
+        ) : applicationsQuery.isError ? (
+          <div className="inline-empty"><p className="empty-copy">Your recent applications are temporarily unavailable.</p></div>
+        ) : applications.length === 0 ? (
+          <div className="inline-empty">
+            <span className="empty-icon"><BriefcaseBusiness size={18} aria-hidden="true" /></span>
+            <div><p className="empty-title">Your next application starts here.</p><p className="empty-copy">Save an opportunity to keep it close and start building your tracker.</p></div>
+            <Link className="button button-secondary" href="/dashboard/opportunities">Explore roles</Link>
+          </div>
+        ) : (
+          <div className="recent-list">
+            {applications.slice(0, 5).map(application => (
+              <div className="recent-row" key={application.id}>
+                <span className="company-avatar">{application.company?.trim().slice(0, 1).toUpperCase() || "•"}</span>
+                <div className="recent-role"><span className="recent-role-title">{application.role}</span><span className="recent-company">{application.company}</span></div>
+                <span className={`status-pill ${statusClass[application.status] ?? "status-neutral"}`}>{application.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="dashboard-footer-card">
+        <div className="dashboard-footer-mark"><Sparkles size={17} aria-hidden="true" /></div>
+        <div><h2 className="section-title">Make the recommendations yours</h2><p className="section-caption">Add your skills and target roles to get more relevant AI Picks.</p></div>
+        <Link className="button button-secondary" href="/dashboard/profile">Complete your profile <ArrowRight size={14} aria-hidden="true" /></Link>
+      </section>
     </div>
   );
 }

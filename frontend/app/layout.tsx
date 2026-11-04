@@ -1,19 +1,19 @@
-﻿import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import type { Metadata } from "next";
 import { QueryProvider } from "@/providers/QueryProvider";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
-
 export const metadata: Metadata = {
-  title: "Career Agent",
-  description: "Autonomous Career Operating System",
+  title: {
+    default: "Career Agent | Your career, in motion",
+    template: "%s | Career Agent",
+  },
+  description: "Find opportunities, manage applications, and make your next career move with clarity.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={inter.className}>
+      <body>
         <QueryProvider>{children}</QueryProvider>
       </body>
     </html>

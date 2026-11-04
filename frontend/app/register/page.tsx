@@ -1,8 +1,11 @@
-﻿"use client";
+"use client";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { register, login } from "@/lib/auth";
+import { ArrowRight, BriefcaseBusiness, Check, Compass, Sparkles } from "lucide-react";
+import axios from "axios";
+import { login, register } from "@/lib/auth";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -12,50 +15,106 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true); setError("");
-    try { await register(email, password, fullName); await login(email, password); router.push("/dashboard"); }
-    catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(msg ?? "Registration failed");
-    } finally { setLoading(false); }
+    setLoading(true);
+    setError("");
+    try {
+      await register(email, password, fullName);
+      await login(email, password);
+      router.push("/dashboard");
+    } catch (requestError: unknown) {
+      const detail = axios.isAxiosError(requestError)
+        ? requestError.response?.data?.detail
+        : undefined;
+      setError(
+        typeof detail === "string"
+          ? detail
+          : axios.isAxiosError(requestError) && !requestError.response
+            ? "We couldn’t reach Career Agent. Check your connection and try again."
+            : "We couldn’t create your account. Please check your details and try again.",
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
-  const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-3)", color: "var(--text)", fontSize: 14, outline: "none", transition: "border-color 0.15s" };
-
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}>
-      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 50% 0%, rgba(124,111,255,0.08) 0%, transparent 70%)", pointerEvents: "none" }} />
-      <div style={{ width: "100%", maxWidth: 400, padding: "0 24px", position: "relative" }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 14, background: "linear-gradient(135deg, var(--primary), #a78bfa)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, margin: "0 auto 16px" }}>✦</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--text)", margin: 0, letterSpacing: "-0.02em" }}>Create your account</h1>
-          <p style={{ color: "var(--text-2)", fontSize: 14, marginTop: 6 }}>Free for students forever</p>
+    <main className="auth-layout">
+      <aside className="auth-aside">
+        <Link className="auth-brand" href="/" aria-label="Career Agent home">
+          <span className="brand-icon"><Sparkles size={17} aria-hidden="true" /></span>
+          <span>Career Agent</span>
+        </Link>
+        <div className="auth-copy">
+          <div className="eyebrow">A workspace for what&apos;s next</div>
+          <h1>Make your<br />next move<br /><span>your own.</span></h1>
+          <p>Bring your search into focus with one calm, clear place for discovering roles and building your momentum.</p>
         </div>
-        <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 16, padding: 28 }}>
-          {error && <div style={{ marginBottom: 16, padding: "10px 12px", borderRadius: 8, background: "var(--danger-dim)", color: "var(--danger)", fontSize: 13, border: "1px solid rgba(248,113,113,0.2)" }}>{error}</div>}
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {[{ label: "Full name", type: "text", value: fullName, set: setFullName, ph: "Your name", req: false },
-              { label: "Email", type: "email", value: email, set: setEmail, ph: "you@example.com", req: true },
-              { label: "Password", type: "password", value: password, set: setPassword, ph: "Min 6 characters", req: true }
-            ].map(f => (
-              <div key={f.label}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-2)", marginBottom: 6 }}>{f.label}</label>
-                <input type={f.type} value={f.value} onChange={e => f.set(e.target.value)} style={inputStyle} placeholder={f.ph} required={f.req}
-                  onFocus={e => (e.target as HTMLInputElement).style.borderColor = "var(--primary)"}
-                  onBlur={e => (e.target as HTMLInputElement).style.borderColor = "var(--border)"} />
+        <div className="auth-proof">
+          <span className="proof-pill"><Compass size={13} aria-hidden="true" /> Discover opportunities</span>
+          <span className="proof-pill"><BriefcaseBusiness size={13} aria-hidden="true" /> Track your progress</span>
+          <span className="proof-pill"><Check size={13} aria-hidden="true" /> Free for students</span>
+        </div>
+      </aside>
+
+      <section className="auth-main">
+        <div className="auth-card-wrap">
+          <Link className="auth-mobile-brand" href="/">
+            <span className="brand-icon"><Sparkles size={16} aria-hidden="true" /></span>
+            Career Agent
+          </Link>
+          <h2 className="auth-heading">Create your account</h2>
+          <p className="auth-subheading">A little setup now. A clearer career search from here on.</p>
+          <div className="auth-card">
+            {error && <div className="alert alert-error" role="alert">{error}</div>}
+            <form className="auth-form" onSubmit={handleSubmit}>
+              <div className="field-wrap">
+                <label className="field-label" htmlFor="register-name">Full name <span style={{ color: "var(--text-3)", fontWeight: 400 }}>· optional</span></label>
+                <input
+                  autoComplete="name"
+                  className="field"
+                  id="register-name"
+                  onChange={event => setFullName(event.target.value)}
+                  placeholder="How should we address you?"
+                  type="text"
+                  value={fullName}
+                />
               </div>
-            ))}
-            <button type="submit" disabled={loading} style={{ padding: "11px", borderRadius: 10, background: "var(--primary)", color: "white", fontSize: 14, fontWeight: 600, border: "none", cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1, marginTop: 4, transition: "opacity 0.15s" }}>
-              {loading ? "Creating account..." : "Get started →"}
-            </button>
-          </form>
+              <div className="field-wrap">
+                <label className="field-label" htmlFor="register-email">Email address</label>
+                <input
+                  autoComplete="email"
+                  className="field"
+                  id="register-email"
+                  onChange={event => setEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  type="email"
+                  value={email}
+                />
+              </div>
+              <div className="field-wrap">
+                <label className="field-label" htmlFor="register-password">Password</label>
+                <input
+                  autoComplete="new-password"
+                  className="field"
+                  id="register-password"
+                  onChange={event => setPassword(event.target.value)}
+                  placeholder="Choose a password"
+                  required
+                  type="password"
+                  value={password}
+                />
+              </div>
+              <button className="button auth-submit" disabled={loading} type="submit">
+                {loading ? "Creating your account…" : <>Create account <ArrowRight size={15} aria-hidden="true" /></>}
+              </button>
+            </form>
+          </div>
+          <p className="auth-footnote">Already have an account? <Link href="/login">Sign in</Link></p>
         </div>
-        <p style={{ textAlign: "center", fontSize: 13, color: "var(--text-3)", marginTop: 20 }}>
-          Already have an account?{" "}<Link href="/login" style={{ color: "var(--primary)", textDecoration: "none" }}>Sign in</Link>
-        </p>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

@@ -1,6 +1,8 @@
-﻿"use client";
+"use client";
+
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowDownToLine, ArrowLeft, ArrowRight, BriefcaseBusiness, MapPin, Search, Sparkles } from "lucide-react";
 import api from "@/lib/api";
 import type { Opportunity } from "@/types";
 
@@ -10,119 +12,151 @@ export default function OpportunitiesPage() {
   const [source, setSource] = useState("");
   const [page, setPage] = useState(0);
   const [saving, setSaving] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState("");
+  const [actionError, setActionError] = useState("");
   const limit = 20;
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["opportunities", search, source, page],
     queryFn: async () => {
-      const p = new URLSearchParams({ limit: String(limit), skip: String(page * limit) });
-      if (search) p.set("search", search);
-      if (source) p.set("source", source);
-      const r = await api.get<Opportunity[]>("/opportunities?" + p.toString());
-      return r.data;
+      const params = new URLSearchParams({ limit: String(limit), skip: String(page * limit) });
+      if (search) params.set("search", search);
+      if (source) params.set("source", source);
+      return (await api.get<Opportunity[]>("/opportunities?" + params.toString())).data;
     },
   });
 
   const applyMutation = useMutation({
-    mutationFn: ({ opp, status }: { opp: Opportunity; status: string }) =>
-      api.post("/applications", { company: opp.organization, role: opp.title, job_link: opp.url, status }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["applications"] }),
+    mutationFn: ({ opportunity, status }: { opportunity: Opportunity; status: string }) =>
+      api.post("/applications", {
+        company: opportunity.organization,
+        role: opportunity.title,
+        job_link: opportunity.url,
+        status,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["applications"] });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
   });
 
-  async function handleAction(opp: Opportunity, status: string) {
-    setSaving(opp.id + status);
-    try { await applyMutation.mutateAsync({ opp, status }); }
-    catch { /* already tracked */ }
-    finally { setSaving(null); }
+  async function handleAction(opportunity: Opportunity, status: string) {
+    setSaving(opportunity.id + status);
+    setActionError("");
+    setActionMessage("");
+    try {
+      await applyMutation.mutateAsync({ opportunity, status });
+      setActionMessage(`“${opportunity.title}” added to your ${status === "saved" ? "saved roles" : "applications"}.`);
+    } catch {
+      setActionError("That role couldn’t be added. It may already be in your tracker—check Applications and try again.");
+    } finally {
+      setSaving(null);
+    }
   }
 
-  const tagBadge = (tag: string) => (
-    <span key={tag} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, background: "rgba(255,255,255,0.06)", color: "var(--text-3)", border: "1px solid var(--border)" }}>{tag}</span>
-  );
+  const formatSource = (value: string) => value.replaceAll("_", " ");
 
   return (
-    <div style={{ padding: "32px 40px" }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>Opportunities</h1>
-        <p style={{ color: "var(--text-2)", fontSize: 13, marginTop: 4 }}>Browse and apply to 2000+ remote positions</p>
-      </div>
+    <div className="page-wrap">
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">Explore</div>
+          <h1 className="page-title">Opportunities</h1>
+          <p className="page-description">Find a role or program that feels like your next step.</p>
+        </div>
+        <span className="page-context"><Sparkles size={14} aria-hidden="true" /> Curated across trusted sources</span>
+      </header>
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} placeholder="Search roles, companies..."
-          style={{ flex: 1, padding: "9px 14px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-2)", color: "var(--text)", fontSize: 13, outline: "none" }}
-          onFocus={e => (e.target as HTMLInputElement).style.borderColor = "var(--primary)"}
-          onBlur={e => (e.target as HTMLInputElement).style.borderColor = "var(--border)"} />
-        <select value={source} onChange={e => { setSource(e.target.value); setPage(0); }}
-          style={{ padding: "9px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-2)", color: "var(--text-2)", fontSize: 13, outline: "none" }}>
-          <option value="">All sources</option>
-          <option value="remote_jobs">Remote Jobs</option>
-          <option value="curated">Curated</option>
-          <option value="google_sheet">Google Sheet</option>
-        </select>
-      </div>
+      <section className="search-panel panel">
+        <label className="search-box">
+          <Search size={16} aria-hidden="true" />
+          <span className="sr-only">Search opportunities</span>
+          <input
+            aria-label="Search roles and organizations"
+            className="search-input"
+            onChange={event => { setSearch(event.target.value); setPage(0); }}
+            placeholder="Search roles, companies, and programs"
+            value={search}
+          />
+        </label>
+        <label className="filter-select">
+          <span className="sr-only">Filter by source</span>
+          <select aria-label="Filter by source" className="field" onChange={event => { setSource(event.target.value); setPage(0); }} value={source}>
+            <option value="">All sources</option>
+            <option value="remote_jobs">Remote Jobs</option>
+            <option value="curated">Curated</option>
+            <option value="google_sheet">Google Sheet</option>
+          </select>
+        </label>
+      </section>
+
+      {actionMessage && <div className="alert alert-success action-alert" role="status">{actionMessage}</div>}
+      {actionError && <div className="alert alert-error action-alert" role="alert">{actionError}</div>}
 
       {isLoading ? (
-        <div style={{ display: "grid", gap: 8 }}>
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} style={{ height: 76, borderRadius: 12, background: "var(--bg-2)", border: "1px solid var(--border)", animation: "pulse 1.5s infinite" }} />
-          ))}
+        <div className="opportunity-list" aria-label="Loading opportunities">
+          {Array.from({ length: 6 }, (_, index) => <div className="skeleton opportunity-skeleton" key={index} />)}
         </div>
-      ) : (
+      ) : isError ? (
+        <div className="panel empty-state">
+          <div><span className="empty-icon"><CompassIcon /></span><p className="empty-title">We couldn’t load opportunities.</p><p className="empty-copy">Check your connection and try again.</p><button className="button button-secondary empty-action" onClick={() => refetch()}>Try again</button></div>
+        </div>
+      ) : data?.length ? (
         <>
-          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 12 }}>{data?.length ?? 0} results · page {page + 1}</div>
-          <div style={{ display: "grid", gap: 6 }}>
-            {data?.map(opp => (
-              <div key={opp.id} style={{ padding: "14px 18px", borderRadius: 12, border: "1px solid var(--border)", background: "var(--bg-2)", display: "flex", alignItems: "center", gap: 16, transition: "border-color 0.15s" }}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = "var(--border-hover)"}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <a href={opp.url} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", textDecoration: "none" }}
-                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "var(--primary)"}
-                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text)"}>
-                      {opp.title}
-                    </a>
-                    {opp.is_remote && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "var(--primary-dim)", color: "var(--primary)", border: "1px solid var(--primary-glow)" }}>Remote</span>}
+          <div className="results-meta"><span>{data.length} {data.length === 1 ? "opportunity" : "opportunities"} on this page</span><span>Page {page + 1}</span></div>
+          <div className="opportunity-list">
+            {data.map((opportunity, index) => (
+              <article className="opportunity-card" key={opportunity.id} style={{ animationDelay: `${Math.min(index, 7) * 35}ms` }}>
+                <div className="opportunity-mark" aria-hidden="true">{opportunity.organization.trim().slice(0, 1).toUpperCase() || <BriefcaseBusiness size={16} />}</div>
+                <div className="opportunity-main">
+                  <div className="opportunity-title-line">
+                    <a className="opportunity-title" href={opportunity.url} rel="noreferrer noopener" target="_blank">{opportunity.title}</a>
+                    {opportunity.is_remote && <span className="tag tag-green">Remote</span>}
+                    {opportunity.deadline && <span className="tag tag-amber">Deadline {opportunity.deadline}</span>}
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 12, color: "var(--text-2)" }}>{opp.organization}</span>
-                    {opp.stipend && <span style={{ fontSize: 11, color: "var(--success)" }}>· {opp.stipend}</span>}
-                    {opp.location && <span style={{ fontSize: 11, color: "var(--text-3)" }}>· {opp.location}</span>}
-                    <div style={{ display: "flex", gap: 4 }}>
-                      {opp.tags?.split(",").slice(0, 2).map(t => t.trim()).filter(t => t && !t.startsWith("email:")).map(tagBadge)}
+                  <div className="opportunity-details">
+                    <span>{opportunity.organization}</span>
+                    {opportunity.location && <span><MapPin size={11} aria-hidden="true" /> {opportunity.location}</span>}
+                    {opportunity.stipend && <span className="opportunity-stipend">{opportunity.stipend}</span>}
+                    <span className="source-tag">{formatSource(opportunity.source)}</span>
+                  </div>
+                  {!!opportunity.tags && (
+                    <div className="opportunity-tags">
+                      {opportunity.tags.split(",").map(tag => tag.trim()).filter(tag => tag && !tag.startsWith("email:")).slice(0, 3).map(tag => <span className="tag" key={tag}>{tag}</span>)}
                     </div>
-                  </div>
+                  )}
                 </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button onClick={() => handleAction(opp, "saved")} disabled={saving === opp.id + "saved"}
-                    style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-2)", fontSize: 12, cursor: "pointer", transition: "all 0.15s" }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--primary)"; (e.currentTarget as HTMLElement).style.color = "var(--primary)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-2)"; }}>
-                    {saving === opp.id + "saved" ? "..." : "Save"}
+                <div className="opportunity-actions">
+                  <button className="button button-quiet" disabled={saving === opportunity.id + "saved"} onClick={() => handleAction(opportunity, "saved")} type="button">
+                    <ArrowDownToLine size={14} aria-hidden="true" /> {saving === opportunity.id + "saved" ? "Saving…" : "Save"}
                   </button>
-                  <button onClick={() => handleAction(opp, "applied")} disabled={saving === opp.id + "applied"}
-                    style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "var(--primary)", color: "white", fontSize: 12, cursor: "pointer", fontWeight: 500, transition: "opacity 0.15s" }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "0.85"}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "1"}>
-                    {saving === opp.id + "applied" ? "..." : "Applied ✓"}
+                  <button className="button" disabled={saving === opportunity.id + "applied"} onClick={() => handleAction(opportunity, "applied")} type="button">
+                    {saving === opportunity.id + "applied" ? "Adding…" : "Track application"}
                   </button>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20 }}>
-            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-              style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-2)", fontSize: 13, cursor: page === 0 ? "not-allowed" : "pointer", opacity: page === 0 ? 0.4 : 1 }}>
-              ← Previous
-            </button>
-            <button onClick={() => setPage(p => p + 1)} disabled={(data?.length ?? 0) < limit}
-              style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-2)", fontSize: 13, cursor: (data?.length ?? 0) < limit ? "not-allowed" : "pointer", opacity: (data?.length ?? 0) < limit ? 0.4 : 1 }}>
-              Next →
-            </button>
-          </div>
+          <nav className="pagination" aria-label="Opportunity pages">
+            <button className="button button-secondary" disabled={page === 0} onClick={() => setPage(current => Math.max(0, current - 1))} type="button"><ArrowLeft size={14} aria-hidden="true" /> Previous</button>
+            <span>Page {page + 1}</span>
+            <button className="button button-secondary" disabled={data.length < limit} onClick={() => setPage(current => current + 1)} type="button">Next <ArrowRight size={14} aria-hidden="true" /></button>
+          </nav>
         </>
+      ) : (
+        <div className="panel empty-state">
+          <div>
+            <span className="empty-icon"><Search size={18} aria-hidden="true" /></span>
+            <p className="empty-title">{search || source ? "No opportunities match this search." : "A fresh start."}</p>
+            <p className="empty-copy">{search || source ? "Try a broader keyword or clear the source filter." : "New opportunities will show up here as soon as they’re available."}</p>
+            {(search || source) && <button className="button button-secondary empty-action" onClick={() => { setSearch(""); setSource(""); setPage(0); }}>Clear filters</button>}
+          </div>
+        </div>
       )}
     </div>
   );
+}
+
+function CompassIcon() {
+  return <Search size={18} aria-hidden="true" />;
 }
