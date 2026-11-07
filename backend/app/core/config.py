@@ -25,6 +25,24 @@ class Settings(BaseSettings):
     google_sheets_enabled: bool = True
     anthropic_api_key: str = ""
 
+    # --- LLM provider chain (free tier) ---
+    gemini_api_key: str = ""
+    groq_api_key: str = ""
+    openrouter_api_key: str = ""
+    llm_primary_model: str = "gemini-flash-lite-latest"
+    llm_fallback_model: str = "gemini-2.5-flash-lite"
+
+    # --- BYOK encryption (Fernet) ---
+    encryption_key: str = ""
+
+    # --- Crustdata ---
+    crustdata_api_key: str = ""
+
+    # --- Agent runtime ---
+    agent_max_steps: int = 8
+    agent_credit_budget: float = 50.0
+    agent_dry_run_default: bool = True
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
