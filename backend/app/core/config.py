@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     openrouter_api_key: str = ""
     llm_primary_model: str = "gemini-flash-lite-latest"
-    llm_fallback_model: str = "gemini-2.5-flash-lite"
+    llm_fallback_model: str = "gemini-flash-latest"
 
     # --- BYOK encryption (Fernet) ---
     encryption_key: str = ""
