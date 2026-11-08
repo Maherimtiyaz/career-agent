@@ -262,6 +262,16 @@ class Orchestrator:
             step.result = result
             step.status = StepStatus.OK if result.ok else StepStatus.FAILED
             step.finished_at = datetime.now(timezone.utc)
+            # Approval records need the real step index; the tool can't know it
+            # (it receives no step context via args), so the orchestrator
+            # backfills it here. Without this, decision.step_index validation
+            # in approve() fails with a false mismatch.
+            if (
+                tool_name_str == ToolName.REQUEST_APPROVAL.value
+                and result.ok
+                and ctx.pending_approval is not None
+            ):
+                ctx.pending_approval.step_index = step.index
             run.current_step = state.step_index
             run.credits_used = ctx.credits_used
 
