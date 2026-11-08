@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID
 
-from backend.app import db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.crustdata import CrustdataClient
