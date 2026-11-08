@@ -149,7 +149,8 @@ class Orchestrator:
         run_id: UUID,
         decision: ApprovalDecision,
         db: AsyncSession | None = None,
-    ) -> AgentRun:        """Resume a paused run after the user's HITL decision."""
+    ) -> AgentRun:
+        """Resume a paused run after the user's HITL decision."""
         run = cls._RUNS.get(run_id)
         state = cls._STATES.get(run_id)
         if run is None or state is None:
@@ -355,3 +356,4 @@ class Orchestrator:
 
 
 __all__ = ["Orchestrator", "PLANNER_SYSTEM_PROMPT"]
+
