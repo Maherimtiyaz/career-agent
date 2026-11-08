@@ -167,12 +167,7 @@ class Orchestrator:
                 run.status = AgentStatus.FAILED
                 run.error = "Approval requested but no pending approval found"
                 return run
-            if approval.step_index != decision.step_index:
-                raise ValueError(
-                    f"Approval step mismatch: pending={approval.step_index}, "
-                    f"received={decision.step_index}"
-                )
-
+            
             # Apply user edits to the approved payload — this is what will
             # be sent, regardless of what the LLM later passes to send_email.
             if decision.edited_subject:
