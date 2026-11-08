@@ -259,10 +259,14 @@ class Orchestrator:
             )
 
             result = await execute_tool(tool_name_str, tool_args, ctx)
+            # Inject step_index for request_approval. Tools are stateless and
+            # can't know the loop position; this is the only place it's known.
+            if tool_name_str == ToolName.REQUEST_APPROVAL.value:
+                tool_args = {**tool_args, "_step_index": state.step_index}
             step.result = result
             step.status = StepStatus.OK if result.ok else StepStatus.FAILED
             step.finished_at = datetime.now(timezone.utc)
-                        # After send_email succeeds, the run is DONE. Do not rely on the
+            # After send_email succeeds, the run is DONE. Do not rely on the
             # LLM to emit a final no-tool-call turn — some models will try
             # one more action, hitting max_steps and falsely reporting failure.
             if (
