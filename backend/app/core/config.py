@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     # --- Crustdata ---
     crustdata_api_key: str = ""
+    crustdata_dry_run: bool = True
+    crustdata_cache_ttl_seconds: int = 86400  # 24h
 
     # --- Agent runtime ---
     agent_max_steps: int = 8
