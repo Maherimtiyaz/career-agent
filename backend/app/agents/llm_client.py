@@ -184,7 +184,7 @@ async def health_check() -> dict[str, Any]:
             client = AsyncOpenAI(
                 api_key=provider.api_key,
                 base_url=provider.base_url,
-                timeout=15.0,
+                timeout=45.0,
             )
             response = await client.chat.completions.create(
                 model=provider.model,
