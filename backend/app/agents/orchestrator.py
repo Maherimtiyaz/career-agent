@@ -262,18 +262,17 @@ class Orchestrator:
             step.result = result
             step.status = StepStatus.OK if result.ok else StepStatus.FAILED
             step.finished_at = datetime.now(timezone.utc)
-            # Approval records need the real step index; the tool can't know it
-            # (it receives no step context via args), so the orchestrator
-            # backfills it here. Without this, decision.step_index validation
-            # in approve() fails with a false mismatch.
+                        # After send_email succeeds, the run is DONE. Do not rely on the
+            # LLM to emit a final no-tool-call turn — some models will try
+            # one more action, hitting max_steps and falsely reporting failure.
             if (
-                tool_name_str == ToolName.REQUEST_APPROVAL.value
+                tool_name_str == ToolName.SEND_EMAIL.value
                 and result.ok
-                and ctx.pending_approval is not None
             ):
-                ctx.pending_approval.step_index = step.index
-            run.current_step = state.step_index
-            run.credits_used = ctx.credits_used
+                run.status = AgentStatus.COMPLETED
+                run.current_step = state.step_index
+                run.credits_used = ctx.credits_used
+                return
 
             # Append assistant + tool messages
             state.messages.append(
