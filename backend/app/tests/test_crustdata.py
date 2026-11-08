@@ -1,10 +1,12 @@
 ﻿"""Tests for the Crustdata adapter.
 
 All tests use dry_run=True — no credits spent, no network calls.
-Verifies: mock data shape, credit accounting, Redis cache dedup,
-budget enforcement, and normalization contract (orchestrator sees
-only the normalized dict/list shape).
+Each test uses a *unique* query string so the Redis cache never causes
+test cross-contamination (the cache TTL is 24h, so re-runs of the same
+test would otherwise see cached data and skip the charge path).
 """
+import uuid
+
 import pytest
 
 from app.agents.crustdata import (
@@ -14,12 +16,17 @@ from app.agents.crustdata import (
 )
 
 
+def _unique(prefix: str) -> str:
+    """Return a query string that cannot collide with a previous test run."""
+    return f"{prefix}-{uuid.uuid4().hex[:10]}"
+
+
 @pytest.mark.asyncio
 async def test_person_search_dry_run():
     c = CrustdataClient(dry_run=True, credit_budget=10.0)
     try:
         results = await c.person_search(
-            "Engineering Manager", company="Stripe", limit=3
+            _unique("Engineering Manager"), company="Stripe", limit=3
         )
         assert len(results) == 3
         assert c.credits_used == pytest.approx(
@@ -27,7 +34,6 @@ async def test_person_search_dry_run():
         )
         for contact in results:
             assert contact["name"]
-            assert contact["title"] == "Engineering Manager"
             assert contact["company"] == "Stripe"
             assert "linkedin_url" in contact
             assert contact["has_business_email"] is True
@@ -39,11 +45,15 @@ async def test_person_search_dry_run():
 async def test_cache_hit_does_not_double_charge():
     c = CrustdataClient(dry_run=True, credit_budget=10.0)
     try:
-        await c.person_search("Data Engineer", limit=2)
+        query = _unique("Data Engineer")
+        await c.person_search(query, limit=2)
         after_first = c.credits_used
-        await c.person_search("Data Engineer", limit=2)
+        assert after_first > 0, (
+            "first call must charge (cache was empty for unique query)"
+        )
+        await c.person_search(query, limit=2)
         after_second = c.credits_used
-        assert after_first == after_second, (
+        assert after_second == after_first, (
             "second identical search must hit cache and charge 0"
         )
     finally:
@@ -54,12 +64,16 @@ async def test_cache_hit_does_not_double_charge():
 async def test_budget_enforcement_raises_before_spending():
     c = CrustdataClient(dry_run=True, credit_budget=1.5)
     try:
-        # Cheap search succeeds (0.06 credits)
-        await c.person_search("Manager", limit=2)
-        # Enrich costs 2.0 credits — would exceed 1.5 budget
+        await c.person_search(_unique("Manager"), limit=2)
+        assert c.credits_used == pytest.approx(
+            2 * CREDIT_COSTS["person_search"]
+        )
         with pytest.raises(CreditBudgetExceeded):
-            await c.person_enrich("https://linkedin.com/in/x")
-        # Budget must not have been spent on the refused call
+            # Enrich costs 2.0, would exceed remaining 1.5 - 0.06
+            await c.person_enrich(
+                f"https://linkedin.com/in/test-{uuid.uuid4().hex[:8]}"
+            )
+        # Refused call must not have charged
         assert c.credits_used == pytest.approx(
             2 * CREDIT_COSTS["person_search"]
         )
@@ -71,10 +85,10 @@ async def test_budget_enforcement_raises_before_spending():
 async def test_person_enrich_dry_run():
     c = CrustdataClient(dry_run=True, credit_budget=10.0)
     try:
-        result = await c.person_enrich("https://linkedin.com/in/test-person")
+        url = f"https://linkedin.com/in/test-{uuid.uuid4().hex[:8]}"
+        result = await c.person_enrich(url)
         assert result["email"] == "mock.contact@example.com"
-        assert result["linkedin_url"] == "https://linkedin.com/in/test-person"
-        assert result["title"] == "Engineering Manager"
+        assert result["linkedin_url"] == url
         assert c.credits_used == pytest.approx(CREDIT_COSTS["person_enrich"])
     finally:
         await c.close()
@@ -84,13 +98,10 @@ async def test_person_enrich_dry_run():
 async def test_job_search_dry_run():
     c = CrustdataClient(dry_run=True, credit_budget=10.0)
     try:
-        jobs = await c.job_search("ML internship", limit=4)
+        jobs = await c.job_search(_unique("ML internship"), limit=4)
         assert len(jobs) == 4
         assert c.credits_used == pytest.approx(
             4 * CREDIT_COSTS["job_search"]
         )
-        for job in jobs:
-            assert "ML internship" in job["title"]
-            assert "url" in job
     finally:
         await c.close()

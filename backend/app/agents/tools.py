@@ -474,18 +474,40 @@ _DISPATCH = {
 
 
 async def execute_tool(
-    name: ToolName, args: dict[str, Any], ctx: ToolContext
+    name: str | ToolName, args: dict[str, Any], ctx: ToolContext
 ) -> ToolResult:
-    """Execute a tool by name. Never raises — always returns a ToolResult."""
-    handler = _DISPATCH.get(name)
+    """Execute a tool by name. Never raises — always returns a ToolResult.
+
+    Accepts a raw string (what an LLM might hallucinate) and normalizes
+    to ToolName. Invalid names produce an ok=False result rather than a
+    validation error, so callers can log the bad input verbatim.
+    """
+    try:
+        tool_name = name if isinstance(name, ToolName) else ToolName(name)
+    except (ValueError, TypeError):
+        return ToolResult(
+            tool=str(name),
+            ok=False,
+            error=f"Unknown tool: {name!r}",
+        )
+
+    handler = _DISPATCH.get(tool_name)
     if handler is None:
-        return ToolResult(tool=name, ok=False, error=f"Unknown tool: {name}")
+        # Enum value exists but no handler registered — a code bug we must surface
+        return ToolResult(
+            tool=tool_name.value,
+            ok=False,
+            error=f"Tool not registered in dispatch table: {tool_name.value}",
+        )
+
     start = time.monotonic()
     try:
         result = await handler(args, ctx)
     except Exception as exc:
-        logger.exception("tool_crashed", extra={"tool": name.value})
-        result = ToolResult(tool=name, ok=False, error=f"Tool crashed: {exc}")
+        logger.exception("tool_crashed", extra={"tool": tool_name.value})
+        result = ToolResult(
+            tool=tool_name.value, ok=False, error=f"Tool crashed: {exc}"
+        )
     result.duration_ms = int((time.monotonic() - start) * 1000)
     return result
 

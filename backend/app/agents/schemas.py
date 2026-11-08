@@ -35,7 +35,6 @@ class ToolName(str, Enum):
     DB_SEARCH_OPPORTUNITIES = "db_search_opportunities"
     CRUSTDATA_PERSON_SEARCH = "crustdata_person_search"
     CRUSTDATA_PERSON_ENRICH = "crustdata_person_enrich"
-    FIND_EMAIL = "find_email"
     DRAFT_EMAIL = "draft_email"
     REQUEST_APPROVAL = "request_approval"
     SEND_EMAIL = "send_email"
@@ -58,7 +57,7 @@ class ToolCall(BaseModel):
 
 class ToolResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    tool: ToolName
+    tool: str
     ok: bool
     data: Any | None = None
     error: str | None = None
