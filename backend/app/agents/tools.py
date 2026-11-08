@@ -449,7 +449,7 @@ async def _save_lead(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         except (ValueError, TypeError):
             pass
     ctx.session.add(lead)
-    await ctx.session.flush()
+    await ctx.session.commit()
     ctx.collected_leads.append({"id": str(lead.id), **args})
     return ToolResult(
         tool=ToolName.SAVE_LEAD,
