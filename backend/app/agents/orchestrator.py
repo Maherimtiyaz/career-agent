@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID
 
+from backend.app import db
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.crustdata import CrustdataClient
@@ -142,10 +143,13 @@ class Orchestrator:
             run.updated_at = datetime.now(timezone.utc)
 
         return run
-
     @classmethod
-    async def approve(cls, run_id: UUID, decision: ApprovalDecision) -> AgentRun:
-        """Resume a paused run after the user's HITL decision."""
+    async def approve(
+        cls,
+        run_id: UUID,
+        decision: ApprovalDecision,
+        db: AsyncSession | None = None,
+    ) -> AgentRun:        """Resume a paused run after the user's HITL decision."""
         run = cls._RUNS.get(run_id)
         state = cls._STATES.get(run_id)
         if run is None or state is None:
@@ -156,6 +160,8 @@ class Orchestrator:
             )
 
         async with state.lock:
+            if db is not None:
+                state.context.session = db
             if not decision.approved:
                 run.status = AgentStatus.CANCELLED
                 run.error = decision.reason or "Rejected by user"
