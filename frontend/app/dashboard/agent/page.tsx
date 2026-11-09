@@ -366,7 +366,7 @@ export default function AgentPage() {
               <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block">
                 To
               </label>
-              <div className="text-sm mt-0.5 text-slate-900 dark:text-slate-100"
+              <div className="text-sm mt-0.5 text-slate-900 dark:text-slate-100">
                 {currentRun.pending_approval.recipient_name ?? "Contact"}{" "}
                 &lt;{currentRun.pending_approval.recipient_email}&gt;
               </div>
