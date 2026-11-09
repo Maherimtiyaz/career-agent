@@ -13,3 +13,5 @@ token*.json
 agent/.env
 backend/.env
 frontend/.env
+# Local ML model cache
+backend/data/fastembed_cache/
