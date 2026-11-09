@@ -228,13 +228,13 @@ export default function AgentPage() {
   const traceStatus = currentRun ? STATUS_STYLES[currentRun.status] : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-slate-900 dark:text-slate-100">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Bot size={22} />
           Career Outreach Agent
         </h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">
+        <p className="text-slate-600 dark:text-slate-400 mt-1">
           Give the agent a goal. It plans, finds contacts, drafts emails, and
           pauses for your approval before sending anything.
         </p>
@@ -243,14 +243,14 @@ export default function AgentPage() {
       <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
         <label className="text-sm font-medium block">Your goal</label>
         <textarea
-          className="w-full min-h-[100px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm"
+          className="w-full min-h-[100px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           disabled={isRunning}
           placeholder="Describe what you want the agent to do..."
         />
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-xs text-slate-500 dark:text-slate-400">
+          <div className="text-xs text-slate-600 dark:text-slate-400">
             Dry-run mode (no real emails) &bull; Budget 20 credits &bull; Max 8 steps
           </div>
           <button
@@ -296,7 +296,7 @@ export default function AgentPage() {
                   {traceStatus.label}
                 </span>
               )}
-              <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
+              <span className="text-slate-600 dark:text-slate-400 flex items-center gap-1">
                 <Zap size={14} />
                 {currentRun.credits_used.toFixed(2)} credits
               </span>
@@ -315,7 +315,7 @@ export default function AgentPage() {
                 >
                   <Icon size={18} className={clsx("mt-0.5 shrink-0", className)} />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-medium">
+                    <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
                       <ToolIcon size={14} className="text-slate-400" />
                       {TOOL_LABELS[step.call.tool] ?? step.call.tool}
                     </div>
@@ -325,7 +325,7 @@ export default function AgentPage() {
                           "text-xs mt-1 truncate",
                           step.result && !step.result.ok
                             ? "text-red-500"
-                            : "text-slate-500 dark:text-slate-400"
+                            : "text-slate-600 dark:text-slate-400"
                         )}
                       >
                         {summary}
@@ -363,32 +363,32 @@ export default function AgentPage() {
 
           <div className="grid gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400 block">
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block">
                 To
               </label>
-              <div className="text-sm mt-0.5">
+              <div className="text-sm mt-0.5 text-slate-900 dark:text-slate-100"
                 {currentRun.pending_approval.recipient_name ?? "Contact"}{" "}
                 &lt;{currentRun.pending_approval.recipient_email}&gt;
               </div>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400 block">
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block">
                 Subject
               </label>
               <input
                 type="text"
-                className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm"
+                className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
                 value={editedSubject}
                 onChange={(e) => setEditedSubject(e.target.value)}
                 disabled={approveMutation.isPending}
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-500 dark:text-slate-400 block">
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block">
                 Body
               </label>
               <textarea
-                className="w-full mt-1 min-h-[200px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm font-mono"
+                className="w-full mt-1 min-h-[200px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm font-mono"
                 value={editedBody}
                 onChange={(e) => setEditedBody(e.target.value)}
                 disabled={approveMutation.isPending}
@@ -417,7 +417,7 @@ export default function AgentPage() {
             <button
               onClick={() => approveMutation.mutate({ approved: false })}
               disabled={approveMutation.isPending}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-medium disabled:opacity-50 transition"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-medium disabled:opacity-50 transition"
             >
               <XCircle size={16} />
               Reject
@@ -432,9 +432,9 @@ export default function AgentPage() {
           Outreach leads ({leads.length})
         </h2>
         {leadsQuery.isLoading ? (
-          <div className="text-sm text-slate-500 dark:text-slate-400">Loading&hellip;</div>
+          <div className="text-sm text-slate-600 dark:text-slate-400">Loading&hellip;</div>
         ) : leads.length === 0 ? (
-          <div className="text-sm text-slate-500 dark:text-slate-400">
+          <div className="text-sm text-slate-600 dark:text-slate-400">
             No leads yet. Run the agent above.
           </div>
         ) : (
@@ -442,10 +442,10 @@ export default function AgentPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left border-b border-slate-200 dark:border-slate-700">
-                  <th className="py-2 font-medium">Contact</th>
-                  <th className="py-2 font-medium">Email</th>
-                  <th className="py-2 font-medium">Subject</th>
-                  <th className="py-2 font-medium">Status</th>
+                  <th className="py-2 font-medium text-slate-700 dark:text-slate-300">Contact</th>
+                  <th className="py-2 font-medium text-slate-700 dark:text-slate-300">Email</th>
+                  <th className="py-2 font-medium text-slate-700 dark:text-slate-300">Subject</th>
+                  <th className="py-2 font-medium text-slate-700 dark:text-slate-300">Status</th>
                   <th className="py-2 font-medium text-right">Credits</th>
                 </tr>
               </thead>
@@ -461,7 +461,7 @@ export default function AgentPage() {
                         <div className="font-medium">
                           {lead.contact_name ?? "\u2014"}
                         </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                        <div className="text-xs text-slate-600 dark:text-slate-400">
                           {lead.contact_title ?? ""}
                         </div>
                       </td>
@@ -495,3 +495,4 @@ export default function AgentPage() {
     </div>
   );
 }
+
