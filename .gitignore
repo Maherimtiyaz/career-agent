@@ -9,3 +9,7 @@ node_modules/
 *.db
 credentials*.json
 token*.json
+#agent env 
+agent/.env
+backend/.env
+frontend/.env
