@@ -1,0 +1,208 @@
+{
+  "generated_at": "2026-11-09T12:33:01.272206+00:00",
+  "total_scenarios": 10,
+  "passed": 7,
+  "success_rate": 70.0,
+  "approval_rate": 60.0,
+  "avg_steps": 5.9,
+  "avg_credits_per_completed": 0.442,
+  "avg_wall_seconds": 56.5,
+  "tool_distribution": {
+    "db_search_opportunities": 17,
+    "crustdata_person_search": 9,
+    "crustdata_person_enrich": 8,
+    "draft_email": 7,
+    "save_lead": 7,
+    "request_approval": 6,
+    "send_email": 5
+  },
+  "results": [
+    {
+      "id": 1,
+      "name": "Happy path \u2014 ML internship",
+      "passed": true,
+      "status": "completed",
+      "steps": 8,
+      "credits": 2.03,
+      "wall_seconds": 19.61,
+      "approval_reached": true,
+      "tools": [
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "crustdata_person_search",
+        "crustdata_person_enrich",
+        "draft_email",
+        "save_lead",
+        "request_approval",
+        "send_email"
+      ],
+      "error": null
+    },
+    {
+      "id": 2,
+      "name": "Happy path \u2014 Backend role",
+      "passed": true,
+      "status": "completed",
+      "steps": 8,
+      "credits": 0.09,
+      "wall_seconds": 21.67,
+      "approval_reached": true,
+      "tools": [
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "crustdata_person_search",
+        "crustdata_person_enrich",
+        "draft_email",
+        "save_lead",
+        "request_approval",
+        "send_email"
+      ],
+      "error": null
+    },
+    {
+      "id": 3,
+      "name": "Happy path \u2014 Data science role",
+      "passed": false,
+      "status": "failed",
+      "steps": 0,
+      "credits": 0.0,
+      "wall_seconds": 174.31,
+      "approval_reached": false,
+      "tools": [],
+      "error": "LLM unavailable: All LLM providers failed. Tried: gemini-primary (gemini-flash-lite-latest): Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite, description: Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 1.104646577s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://aistudio.google.com/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'description': 'Generate content requests per minute limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.', 'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier', 'quotaDimensions': {'model': 'gemini-3.5-flash-lite', 'location': 'global'}, 'quotaValue': '15'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '1s'}]}}]; gemini-fallback (gemini-flash-latest): Request timed out."
+    },
+    {
+      "id": 4,
+      "name": "Reject flow \u2014 user declines draft",
+      "passed": true,
+      "status": "cancelled",
+      "steps": 8,
+      "credits": 0.0,
+      "wall_seconds": 18.1,
+      "approval_reached": true,
+      "tools": [
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "crustdata_person_search",
+        "crustdata_person_enrich",
+        "draft_email",
+        "save_lead",
+        "request_approval"
+      ],
+      "error": "eval-reject"
+    },
+    {
+      "id": 5,
+      "name": "Vague goal \u2014 planning under uncertainty",
+      "passed": true,
+      "status": "completed",
+      "steps": 8,
+      "credits": 0.09,
+      "wall_seconds": 165.09,
+      "approval_reached": true,
+      "tools": [
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "crustdata_person_search",
+        "crustdata_person_enrich",
+        "draft_email",
+        "save_lead",
+        "request_approval",
+        "send_email"
+      ],
+      "error": null
+    },
+    {
+      "id": 6,
+      "name": "Broad \u2014 any tech internship",
+      "passed": true,
+      "status": "completed",
+      "steps": 8,
+      "credits": 0.0,
+      "wall_seconds": 25.53,
+      "approval_reached": true,
+      "tools": [
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "crustdata_person_search",
+        "crustdata_person_enrich",
+        "draft_email",
+        "save_lead",
+        "request_approval",
+        "send_email"
+      ],
+      "error": null
+    },
+    {
+      "id": 7,
+      "name": "Budget constrained \u2014 tiny credit budget",
+      "passed": false,
+      "status": "error",
+      "steps": 0,
+      "credits": 0.0,
+      "wall_seconds": 0.0,
+      "approval_reached": false,
+      "tools": [],
+      "error": "InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot call Transaction.rollback(): the underlying connection is closed\n(Background on this error at: https://sqlalche.me/e/20/rvf5)"
+    },
+    {
+      "id": 8,
+      "name": "Max-steps constrained \u2014 3 step limit",
+      "passed": true,
+      "status": "failed",
+      "steps": 3,
+      "credits": 0.0,
+      "wall_seconds": 11.08,
+      "approval_reached": false,
+      "tools": [
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "crustdata_person_search"
+      ],
+      "error": "Max steps (3) exceeded"
+    },
+    {
+      "id": 9,
+      "name": "Recruiter contact (not manager)",
+      "passed": false,
+      "status": "failed",
+      "steps": 8,
+      "credits": 0.0,
+      "wall_seconds": 107.44,
+      "approval_reached": false,
+      "tools": [
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "crustdata_person_search",
+        "crustdata_person_enrich",
+        "crustdata_person_search",
+        "crustdata_person_enrich",
+        "draft_email",
+        "save_lead"
+      ],
+      "error": "Max steps (8) exceeded"
+    },
+    {
+      "id": 10,
+      "name": "Repeat \u2014 same goal as #1 (cache efficiency)",
+      "passed": true,
+      "status": "completed",
+      "steps": 8,
+      "credits": 0.0,
+      "wall_seconds": 22.22,
+      "approval_reached": true,
+      "tools": [
+        "db_search_opportunities",
+        "db_search_opportunities",
+        "crustdata_person_search",
+        "crustdata_person_enrich",
+        "draft_email",
+        "save_lead",
+        "request_approval",
+        "send_email"
+      ],
+      "error": null
+    }
+  ]
+}
