@@ -414,23 +414,32 @@ async def _send_email(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     if ctx.dry_run:
         # Advance the corresponding lead to 'sent' so the UI reflects reality.
         # In dry-run, we simulate the email but still mark the DB truthfully.
-        from datetime import datetime, timezone
+                from datetime import datetime, timezone
         from sqlalchemy import update as sa_update
 
-        stmt = (
-            sa_update(OutreachLead)
-            .where(
-                OutreachLead.run_id == ctx.run_id,
-                OutreachLead.contact_email == args["recipient_email"],
-                OutreachLead.status == OutreachStatus.PENDING_APPROVAL.value,
-            )
-            .values(
-                status=OutreachStatus.SENT.value,
-                sent_at=datetime.now(timezone.utc),
-            )
-        )
-        await ctx.session.execute(stmt)
-        await ctx.session.commit()
+        if ctx.session is not None:
+            try:
+                stmt = (
+                    sa_update(OutreachLead)
+                    .where(
+                        OutreachLead.run_id == ctx.run_id,
+                        OutreachLead.contact_email == args["recipient_email"],
+                        OutreachLead.status == OutreachStatus.PENDING_APPROVAL.value,
+                    )
+                    .values(
+                        status=OutreachStatus.SENT.value,
+                        sent_at=datetime.now(timezone.utc),
+                    )
+                )
+                await ctx.session.execute(stmt)
+                await ctx.session.commit()
+            except Exception as exc:
+                # DB write failure should not cascade into "email failed" —
+                # the send action itself (dry-run simulated) succeeded.
+                logger.warning(
+                    "send_email_lead_update_failed",
+                    extra={"run_id": str(ctx.run_id), "error": str(exc)},
+                )
 
         return ToolResult(
             tool=ToolName.SEND_EMAIL,
