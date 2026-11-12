@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.crustdata import CrustdataClient, CrustdataError
@@ -31,7 +31,7 @@ from app.agents.schemas import (
 from app.models.opportunity import Opportunity
 from app.models.outreach_lead import OutreachLead, OutreachStatus
 from app.models.user import User
-
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +414,7 @@ async def _send_email(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     if ctx.dry_run:
         # Advance the corresponding lead to 'sent' so the UI reflects reality.
         # In dry-run, we simulate the email but still mark the DB truthfully.
-                from datetime import datetime, timezone
+        from datetime import datetime, timezone
         from sqlalchemy import update as sa_update
 
         if ctx.session is not None:
