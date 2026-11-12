@@ -1,232 +1,223 @@
-# Career Agent v6 — Autonomous Career OS
+# Career Agent — Autonomous Outreach
 
-> An open-source AI-powered career operating system built for students. Browse 2000+ opportunities, track applications, get AI-matched picks, and import from Google Sheets — all in one dark, fast dashboard.
-
-**Built by a student, for students. Free and open source forever.**
+An agent that finds career opportunities, identifies the right hiring contact, drafts a personalized cold email, and **pauses for your approval** before sending anything.
 
 ---
 
 ## What it does
 
-- **Browse 2400+ opportunities** — remote jobs, internships, fellowships, GSoC orgs, YC startup jobs, MLH programs, Devfolio hackathons
-- **One-click apply tracking** — Save or mark Applied directly from any opportunity card
-- **AI Picks** — keyword-scored recommendations matched to your skills and target roles
-- **Application tracker** — table view with status updates (Applied → Interviewing → Offer/Rejected)
-- **Google Sheet import** — paste a public Sheet URL, sync your personal tracker instantly
-- **Analytics dashboard** — charts for application status, opportunities by source, activity over time
-- **Live scrapers** — GSoC, YC Jobs, MLH Fellowship, Devfolio — auto-refreshed every 24h
-- **Profile page** — set skills, target roles, bio, GitHub/LinkedIn links
-- **Dark UI** — Linear/Raycast-inspired design
+Give the agent a goal in plain English:
+
+> *"Find 1 ML internship and draft a personalized outreach email to a hiring contact. Show me the draft before sending."*
+
+The agent then:
+1. **Plans** — decomposes the goal into tool calls
+2. **Searches** — queries your saved opportunities database first (free)
+3. **Finds contacts** — uses Crustdata to identify hiring managers at the target company
+4. **Enriches** — gets the contact's email and profile
+5. **Drafts** — generates a personalized email from your profile
+6. **Pauses** — presents the draft for human approval (HITL)
+7. **Sends** — only after you click Approve, and only in live mode
+
+Every run produces a visible trace, tracks credit spend, and persists leads to the database.
 
 ---
 
-## Tech Stack
+## Architecture
 
-### Backend
-- Python 3.12 + FastAPI (async)
-- PostgreSQL 16 + SQLAlchemy 2.x + Alembic
-- Argon2 password hashing + JWT auth (access + refresh tokens)
-- APScheduler — daily auto-scraping
-- HTTPX + BeautifulSoup4 — scrapers
-- Redis — caching layer
+┌─────────────────────────────────────────────────────────────┐
+│ Frontend (Next.js 15) │
+│ Goal input → Live trace → Approval card → Leads table │
+└────────────────────────────┬────────────────────────────────┘
+│ HTTP (axios + JWT)
+┌────────────────────────────▼────────────────────────────────┐
+│ Backend (FastAPI) │
+│ ┌──────────────────────────────────────────────────────┐ │
+│ │ Orchestrator (bounded ReAct) │ │
+│ │ LLM → tool call → observation → LLM → ... (max 8) │ │
+│ │ Pauses at request_approval; resumes on decision │ │
+│ └───────┬──────────────────────────────────────────────┘ │
+│ │ 7 tools │
+│ ┌───────▼───────┐ ┌──────────────┐ ┌─────────────────┐ │
+│ │ db_search │ │ crustdata_* │ │ draft_email │ │
+│ │ save_lead │ │ request_appr │ │ send_email │ │
+│ └───────┬───────┘ └──────┬───────┘ └────────┬────────┘ │
+│ │ │ │ │
+│ ┌───────▼─────┐ ┌────────▼────────┐ ┌───────▼─────────┐ │
+│ │ PostgreSQL │ │ Crustdata API │ │ Gemini (LLM) │ │
+│ │ + Redis │ │ (cached 24h) │ │ OpenAI-compat │ │
+│ └─────────────┘ └─────────────────┘ └─────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
 
-### Frontend
-- Next.js 15 (App Router) + React 19 + TypeScript
-- TanStack Query — server state
-- Recharts — analytics charts
-- Tailwind CSS + CSS variables (dark theme)
-- Axios — typed API client
 
-### Infrastructure
-- Docker Compose — one command to run everything
-- Nginx — reverse proxy
-- 5 containers: backend, frontend, postgres, redis, nginx
+### Key design decisions
+
+- **Bounded ReAct, not fixed workflows.** The LLM chooses the next action based on observations. Bounded at `max_steps` to prevent infinite loops.
+- **HITL gate before irreversible actions.** `send_email` is only permitted after `request_approval` returns a user decision. Send args are force-overridden from the approved payload — the LLM never gets to alter a recipient after approval.
+- **Provider-agnostic LLM.** Primary → fallback chain (`gemini-flash-lite-latest` → `gemini-flash-latest` → Groq → OpenRouter). Each speaks OpenAI chat-completions format, so one client covers all.
+- **Credit-aware Crustdata integration.** Redis cache (24h TTL) deduplicates identical queries. Per-run budget enforcement — the agent refuses to spend past its budget rather than failing after the call.
+- **BYOK-ready.** Fernet encryption for per-user API keys. Environment key drives the master encryption; user keys are decrypted only at call time, never logged.
+- **Fails safe.** Cache contamination in tests → isolated via UUID suffixes. LLM rate limits → graceful error, not partial state. Session lifecycle → leads persist via explicit commit.
 
 ---
 
-## Quickstart
+## Evaluation
+
+10 scripted scenarios, dry-run mode (no Crustdata credits consumed, no emails sent). Full table: [`backend/data/eval_results.md`](backend/data/eval_results.md).
+
+| Metric | Value |
+|---|---|
+| Scenarios | 10 |
+| Passed | 7 / 10 |
+| Success rate | 70% |
+| Avg steps per run | 5.9 |
+| Avg credits per completed run | 0.44 |
+| **Safety: HITL gate fired correctly** | **100%** |
+
+### About the 3 failures
+
+All 3 failures were caused by **Gemini free-tier rate limits** (429 responses), not agent logic:
+- Failed runs took 100–175s (retry exhaustion across the fallback chain)
+- Passing runs took 15–25s
+- Every failure left the system in a clean state — **no partial emails, no DB corruption, no orphaned transactions**
+
+In production with a paid LLM tier or a user-provided key (BYOK is built in), we expect near-100% success. The evaluation demonstrates both the agent's capability **and** its graceful degradation under real-world constraints.
+
+### Tool distribution
+
+The agent selects different tools based on context — not a hardcoded script. Across 10 runs:
+
+| Tool | Role |
+|---|---|
+| `db_search_opportunities` | Free; always tried first |
+| `crustdata_person_search` | Contact discovery |
+| `crustdata_person_enrich` | Email retrieval |
+| `draft_email` | LLM-generated personalized copy |
+| `save_lead` | Persist for audit |
+| `request_approval` | Human-in-the-loop pause |
+| `send_email` | Gated on approval |
+
+---
+
+## Tech stack
+
+**Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0 (async), Alembic, PostgreSQL 16, Redis 7, APScheduler, OpenAI SDK (for all LLM providers)
+
+**Frontend:** Next.js 15, React 19, TypeScript, TanStack Query, Tailwind CSS, Recharts, lucide-react
+
+**Infrastructure:** Docker Compose, Nginx (production config in repo)
+
+---
+
+## Quick start
 
 ### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- Git
 
-### 1. Clone
+- Docker + Docker Compose
+- A Gemini API key (free tier: [aistudio.google.com/apikey](https://aistudio.google.com/apikey))
+
+### Setup
+
 ```bash
 git clone https://github.com/Maherimtiyaz/career-agent.git
-cd career-agent/career-agent
-```
+cd career-agent
 
-### 2. Configure
-```bash
+# Copy environment templates
 cp backend/.env.example backend/.env
 cp frontend/.env.local.example frontend/.env.local
-```
 
-The defaults work for local development. Change `JWT_SECRET_KEY` before production.
+# Generate an encryption key for BYOK support
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
-### 3. Run
-```bash
-docker compose up --build
-```
+# Add to backend/.env:
+#   GEMINI_API_KEY=<your key>
+#   ENCRYPTION_KEY=<generated key above>
 
-First build takes ~5 minutes.
+# Start the stack
+docker compose up -d
 
-### 4. Access
-
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:3000 |
-| Backend API docs | http://localhost:8000/docs |
-| Via Nginx | http://localhost |
-
-### 5. Seed opportunities
-```bash
-docker compose exec backend python -m app.ingestion.seed_opportunities
-```
-
-### 6. Run migrations (after pulling updates)
-```bash
+# Apply migrations and seed sample data
 docker compose exec backend alembic upgrade head
-```
+docker compose exec backend python -m app.ingestion.seed_opportunities
 
----
+# Create a test user
+docker compose exec backend python -c "
+import asyncio
+from app.db.session import AsyncSessionLocal
+from app.models.user import User
+from app.core.security import hash_password
 
-## Project Structure
-career-agent/
-├── backend/
-│ ├── app/
-│ │ ├── api/ # FastAPI routers
-│ │ ├── auth/ # JWT dependencies
-│ │ ├── core/ # Config, logging, security
-│ │ ├── crud/ # Database access layer
-│ │ ├── db/ # SQLAlchemy engine + base
-│ │ ├── ingestion/ # Scrapers + Sheet importer + Seeder
-│ │ ├── models/ # ORM models
-│ │ ├── schemas/ # Pydantic schemas
-│ │ ├── scheduler/ # APScheduler jobs
-│ │ └── main.py
-│ ├── alembic/ # Migrations
-│ ├── data/ # Local seed files (not committed)
-│ └── Dockerfile
-├── frontend/
-│ ├── app/dashboard/ # All dashboard pages
-│ ├── lib/ # API client + auth helpers
-│ ├── types/ # TypeScript types
-│ └── Dockerfile
-├── nginx/nginx.conf
-└── docker-compose.yml
----
+async def t():
+    async with AsyncSessionLocal() as db:
+        u = User(email='demo@example.com', hashed_password=hash_password('demo1234'), is_active=True, is_verified=True)
+        db.add(u); await db.commit(); print('created demo@example.com / demo1234')
 
-## API Reference
+asyncio.run(t())
+"
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/auth/register` | No | Register |
-| POST | `/auth/login` | No | Login, get tokens |
-| POST | `/auth/refresh` | No | Refresh token |
-| GET | `/auth/me` | Yes | Current user |
-| PATCH | `/auth/me` | Yes | Update profile |
-| GET | `/opportunities` | No | List/search (supports ?search=, ?source=, ?is_remote=) |
-| POST | `/applications` | Yes | Track application |
-| PATCH | `/applications/{id}` | Yes | Update status |
-| DELETE | `/applications/{id}` | Yes | Remove |
-| GET | `/ai/recommendations` | Yes | AI-scored picks |
-| GET | `/analytics/summary` | Yes | Full analytics |
-| POST | `/ingestion/run` | Yes | Trigger scrapers (?source=all) |
-| POST | `/sheet/import` | Yes | Import Google Sheet |
-| GET | `/health` | No | Liveness |
-| GET | `/health/db` | No | DB check |
+Use it
+Frontend: http://localhost:3000/dashboard/agent
 
-Full docs at `http://localhost:8000/docs`
+API docs: http://localhost:8000/docs
 
----
+Login: demo@example.com / demo1234
 
-## Google Sheet Import
+Paste a goal, click Run agent, review the trace, edit the draft if needed, click Approve & send.
 
-Sheet must be shared as **Anyone with the link can view**.
+Environment variables
+Variable	Required	Purpose
+GEMINI_API_KEY	Yes	Primary LLM provider
+ENCRYPTION_KEY	Yes (for BYOK)	Fernet key for API-key encryption at rest
+CRUSTDATA_API_KEY	Optional	Live contact data; dry-run works without it
+GROQ_API_KEY / OPENROUTER_API_KEY	Optional	Fallback providers
+DATABASE_URL	Yes	Postgres connection string
+REDIS_URL	Yes	Cache + rate-limit state
+CRUSTDATA_DRY_RUN	Yes (default true)	Set false to consume real credits
+AGENT_MAX_STEPS	No	Default 8
+AGENT_CREDIT_BUDGET	No	Default 50.0
+Full list: backend/.env.example.
 
-Required columns: `company`, `role`
+Running tests
+bash
+docker compose exec backend pip install pytest pytest-asyncio -q
+docker compose exec backend python -m pytest app/tests/ -q
+16 tests cover: Pydantic schema contracts, Fernet encrypt/decrypt round-trip, LLM provider fallback, Crustdata adapter (dry-run, caching, budget), tool dispatch, approval flow. All deterministic — no external dependencies.
 
-Optional: `job_link`, `hr_contact`, `status`, `date_applied`, `notes`
+Run the evaluation harness:
 
-Status values: `applied`, `interviewing`, `offer`, `rejected`, `saved`
+bash
+docker compose exec backend python -m app.agents.eval_harness
+Outputs: backend/data/eval_results.{json,md}.
 
----
+API reference
+All endpoints require Authorization: Bearer <token> from POST /auth/login.
 
-## Platform Scrapers
+Method	Endpoint	Purpose
+POST	/agent/run	Start a new agent run. Blocks until pause or completion.
+GET	/agent/run/{id}	Poll run state (plan, credits, pending approval).
+POST	/agent/run/{id}/approve	Approve/reject the pending draft (with optional edits).
+GET	/agent/leads	List the authenticated user's outreach leads.
+Full OpenAPI spec at /docs.
 
-| Source | Type | Method |
-|---|---|---|
-| GSoC | Open Source Fellowships | Public JSON API |
-| YC Who is Hiring | Startup jobs | HN Algolia API |
-| MLH Fellowship | Student programs | Curated |
-| Devfolio | Hackathons | Public API |
+Safety
+Three layers, all demonstrable in the trace:
 
-Scrapers run every 24h automatically. Trigger manually from Dashboard → Data Sources → Refresh Now.
+HITL gate — no email sends without an explicit user approval decision. Args are force-overridden from the approved payload.
 
----
+Credit budget — CrustdataClient._reserve_credits() refuses calls that would exceed the configured budget. Refuses before spending, not after.
 
-## Environment Variables
+Bounded loop — hard limit at max_steps (default 8). Exceeding → clean FAILED state, no partial effects.
 
-### backend/.env
+Roadmap
+Resume parsing — the agent currently works from structured profile fields (skills, bio, target_roles). A resume-upload UI with LLM extraction is planned.
 
-| Variable | Default | Notes |
-|---|---|---|
-| DATABASE_URL | postgresql+asyncpg://careeruser:careerpass@db:5432/careerdb | |
-| REDIS_URL | redis://redis:6379/0 | |
-| JWT_SECRET_KEY | change-this-in-production | Change before deploying |
-| JWT_ACCESS_TOKEN_EXPIRE_MINUTES | 30 | |
-| JWT_REFRESH_TOKEN_EXPIRE_DAYS | 7 | |
-| CORS_ORIGINS | http://localhost:3000,http://localhost | |
+Live email sending — Gmail OAuth flow exists in agent/ but is not wired to the agent path yet. Dry-run mode (current default) simulates sends and marks the lead sent for audit.
 
-### frontend/.env.local
+Multi-agent workflows — sequential steps are sufficient for the current task. Multi-agent orchestration would add complexity without measurable user benefit at this scope.
 
-| Variable | Default | |
-|---|---|---|
-| NEXT_PUBLIC_API_URL | http://localhost:8000 | |
+Persisted run state — runs live in memory (single-process demo). A runs table would survive restarts.
 
----
+Opportunity freshness — the seeded dataset is historical; URLs may be stale. Badge pattern planned.
 
-## Contributing
-
-Contributions are very welcome. This is built for students.
-
-**Good first issues:**
-- Add scrapers: Unstop, HackerEarth, Internshala, LinkedIn
-- Add email alerts for new matched opportunities
-- Improve AI with sentence-transformers embeddings
-- Resume upload + skill extraction
-- Mobile responsive improvements
-- Dark/light mode toggle
-- Export applications to CSV
-
-**Steps:**
-1. Fork the repo
-2. `git checkout -b feat/your-feature`
-3. Make changes, test with `docker compose up --build`
-4. If models changed: `docker compose exec backend alembic revision --autogenerate -m "description"`
-5. Open a PR
-
----
-
-## Roadmap
-
-- [ ] Semantic AI ranking with embeddings
-- [ ] Resume upload and skill extraction
-- [ ] Email alerts for matched opportunities
-- [ ] Unstop / HackerEarth / Internshala scrapers
-- [ ] Mobile responsive UI
-- [ ] Dark/light mode toggle
-- [ ] Email verification
-- [ ] Export to CSV
-- [ ] Outreach CRM (track HR emails, follow-ups)
-
----
-
-## License
-
+License
 MIT
-
----
-
-Built with love by [Mahek Imtiyaz](https://github.com/Maherimtiyaz) · BCA student at Vivekananda Global University, Jaipur
