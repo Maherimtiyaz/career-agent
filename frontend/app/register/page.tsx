@@ -22,7 +22,7 @@ export default function RegisterPage() {
     try {
       await register(email, password, fullName);
       await login(email, password);
-      router.push("/dashboard");
+      router.push("/dashboard/profile");
     } catch (requestError: unknown) {
       const detail = axios.isAxiosError(requestError)
         ? requestError.response?.data?.detail

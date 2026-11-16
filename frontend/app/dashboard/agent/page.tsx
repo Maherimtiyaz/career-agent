@@ -1,40 +1,33 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity,
-  ArrowRight,
+  ArrowUpRight,
   Bot,
   CheckCircle2,
   CircleDot,
   Clock,
+  ExternalLink,
   Loader2,
   Mail,
-  MessageSquare,
+  PenLine,
+  Search,
+  ShieldCheck,
   Sparkles,
-  Target,
-  User,
+  UserRound,
   XCircle,
   Zap,
 } from "lucide-react";
-import clsx from "clsx";
 import api from "@/lib/api";
 
-// ---------- Types ----------
+// ---------- Types (mirror backend/app/agents/schemas.py) ----------
 
-type RunStatus =
-  | "pending"
-  | "planning"
-  | "executing"
-  | "awaiting_approval"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
+type RunStatus = "pending" | "planning" | "executing" | "awaiting_approval" | "completed" | "failed" | "cancelled";
 type StepStatus = "pending" | "running" | "ok" | "failed" | "skipped";
+type ContactSource = "job_posting" | "crustdata" | "crustdata_simulated";
 
-interface AgentStepResult {
+interface StepResult {
   tool: string;
   ok: boolean;
   data: unknown;
@@ -47,101 +40,101 @@ interface AgentStep {
   index: number;
   call: { tool: string; args: Record<string, unknown>; rationale?: string | null };
   status: StepStatus;
-  result: AgentStepResult | null;
+  result: StepResult | null;
 }
 
 interface ApprovalRequest {
-  run_id: string;
-  step_index: number;
-  kind: string;
   recipient_email: string;
   recipient_name?: string | null;
+  contact_title?: string | null;
+  contact_source?: ContactSource | null;
+  company?: string | null;
+  role?: string | null;
+  opportunity_url?: string | null;
   subject: string;
   body: string;
 }
 
 interface AgentRun {
   id: string;
-  user_id: string;
-  goal: {
-    prompt: string;
-    max_steps: number;
-    credit_budget: number;
-    dry_run: boolean;
-  };
+  goal: { prompt: string; max_steps: number; credit_budget: number; dry_run: boolean };
   status: RunStatus;
   plan: AgentStep[];
-  current_step: number;
   credits_used: number;
   error?: string | null;
-  created_at: string;
-  updated_at: string;
   pending_approval: ApprovalRequest | null;
+  final_email: ApprovalRequest | null;
 }
 
 interface OutreachLead {
   id: string;
+  company?: string | null;
+  role?: string | null;
+  opportunity_url?: string | null;
   contact_name?: string | null;
   contact_title?: string | null;
   contact_email?: string | null;
-  contact_linkedin?: string | null;
+  contact_source?: ContactSource | null;
   status: string;
+  error_message?: string | null;
   email_subject?: string | null;
-  email_draft?: string | null;
   credit_cost: number;
   created_at?: string | null;
-  sent_at?: string | null;
 }
 
-// ---------- Helpers ----------
+// ---------- Display helpers ----------
 
-const TOOL_LABELS: Record<string, string> = {
-  db_search_opportunities: "Search saved opportunities",
-  crustdata_person_search: "Find contacts",
-  crustdata_person_enrich: "Enrich contact",
-  draft_email: "Draft email",
-  save_lead: "Save lead",
-  request_approval: "Request approval",
-  send_email: "Send email",
+const PRESET_GOALS = [
+  "Find an ML internship that fits my skills and draft a personalized email to someone on the hiring team.",
+  "Find a remote backend engineering role and reach out to an engineering manager there.",
+  "Find an entry-level security role and draft outreach to the recruiter.",
+];
+
+const TOOL_META: Record<string, { label: string; Icon: typeof Bot }> = {
+  db_search_opportunities: { label: "Search opportunities", Icon: Search },
+  crustdata_person_search: { label: "Find hiring contacts", Icon: UserRound },
+  crustdata_person_enrich: { label: "Enrich contact", Icon: Sparkles },
+  draft_email: { label: "Draft personalized email", Icon: PenLine },
+  request_approval: { label: "Request your approval", Icon: ShieldCheck },
+  send_email: { label: "Send email", Icon: Mail },
 };
 
-const TOOL_ICONS: Record<string, typeof Bot> = {
-  db_search_opportunities: Target,
-  crustdata_person_search: User,
-  crustdata_person_enrich: Sparkles,
-  draft_email: MessageSquare,
-  save_lead: CheckCircle2,
-  request_approval: Clock,
-  send_email: Mail,
+const RUN_STATUS: Record<RunStatus, { label: string; cls: string }> = {
+  pending: { label: "Starting", cls: "status-blue" },
+  planning: { label: "Planning", cls: "status-blue" },
+  executing: { label: "Working", cls: "status-blue" },
+  awaiting_approval: { label: "Waiting for you", cls: "status-warning" },
+  completed: { label: "Completed", cls: "status-success" },
+  failed: { label: "Failed", cls: "status-danger" },
+  cancelled: { label: "Rejected", cls: "status-neutral" },
 };
 
-const STATUS_STYLES: Record<string, { label: string; className: string }> = {
-  pending: { label: "Pending", className: "status-neutral" },
-  planning: { label: "Planning", className: "status-blue" },
-  executing: { label: "Executing", className: "status-blue" },
-  awaiting_approval: { label: "Awaiting approval", className: "status-warning" },
-  completed: { label: "Completed", className: "status-success" },
-  failed: { label: "Failed", className: "status-danger" },
-  cancelled: { label: "Cancelled", className: "status-neutral" },
-  pending_approval: { label: "Pending approval", className: "status-warning" },
-  approved: { label: "Approved", className: "status-blue" },
-  sent: { label: "Sent", className: "status-success" },
-  skipped: { label: "Skipped", className: "status-neutral" },
+const LEAD_STATUS: Record<string, { label: string; cls: string }> = {
+  pending_approval: { label: "Awaiting approval", cls: "status-warning" },
+  approved: { label: "Approved", cls: "status-blue" },
+  sent: { label: "Sent", cls: "status-success" },
+  failed: { label: "Delivery failed", cls: "status-danger" },
+  skipped: { label: "Rejected", cls: "status-neutral" },
 };
 
-function stepStatusIcon(status: StepStatus) {
-  switch (status) {
-    case "ok":
-      return { Icon: CheckCircle2, className: "text-emerald-500" };
-    case "failed":
-      return { Icon: XCircle, className: "text-red-500" };
-    case "skipped":
-      return { Icon: CircleDot, className: "text-slate-400" };
-    case "running":
-      return { Icon: Loader2, className: "text-blue-500 animate-spin" };
-    default:
-      return { Icon: CircleDot, className: "text-slate-300" };
-  }
+const SOURCE_META: Record<ContactSource, { label: string; cls: string; hint: string }> = {
+  job_posting: { label: "From job posting", cls: "tag-green", hint: "Application email published on the listing" },
+  crustdata: { label: "Crustdata · live", cls: "tag-green", hint: "Found and enriched via Crustdata people data" },
+  crustdata_simulated: {
+    label: "Simulated contact",
+    cls: "tag-amber",
+    hint: "Crustdata dry-run mode: placeholder person, not a real contact",
+  },
+};
+
+function SourceTag({ source }: { source?: ContactSource | null }) {
+  if (!source) return null;
+  const meta = SOURCE_META[source];
+  return (
+    <span className={`tag ${meta.cls}`} title={meta.hint}>
+      {meta.label}
+    </span>
+  );
 }
 
 function extractError(err: unknown, fallback: string): string {
@@ -152,338 +145,375 @@ function extractError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-function summarizeStepResult(result: AgentStepResult | null): string | null {
-  if (!result) return null;
-  if (!result.ok) return result.error ?? "Failed";
-  if (Array.isArray(result.data)) return `${result.data.length} result(s)`;
-  if (result.data && typeof result.data === "object") {
-    const obj = result.data as Record<string, unknown>;
-    if (typeof obj.lead_id === "string") return `lead ${obj.lead_id.slice(0, 8)}…`;
-    if (typeof obj.subject === "string") return obj.subject;
+function summarize(step: AgentStep): string | null {
+  const r = step.result;
+  if (!r) return null;
+  if (!r.ok) return r.error ?? "Failed";
+  const d = r.data as Record<string, unknown> | Record<string, unknown>[] | null;
+  switch (step.call.tool) {
+    case "db_search_opportunities": {
+      const rows = (d as Record<string, unknown>[]) ?? [];
+      if (!rows.length) return `No matches for “${String(step.call.args.query ?? "")}”`;
+      return `${rows.length} match${rows.length > 1 ? "es" : ""} · top: ${rows[0].title} @ ${rows[0].company}`;
+    }
+    case "crustdata_person_search": {
+      const rows = (d as Record<string, unknown>[]) ?? [];
+      return rows.length
+        ? `${rows.length} people · ${rows.slice(0, 3).map((p) => `${p.name} (${p.title ?? "?"})`).join(", ")}`
+        : "No people found";
+    }
+    case "crustdata_person_enrich": {
+      const p = d as Record<string, unknown>;
+      return p?.email ? `${p.name ?? "Contact"} · ${p.email}` : "No email on this profile";
+    }
+    case "draft_email":
+      return `“${(d as Record<string, unknown>)?.subject ?? ""}”`;
+    case "request_approval":
+      return "Lead saved. Paused for your review.";
+    case "send_email":
+      return String((d as Record<string, unknown>)?.note ?? "Sent");
+    default:
+      return null;
   }
-  return null;
+}
+
+type StageState = "todo" | "active" | "done" | "failed";
+
+function computeStages(run: AgentRun | null): { label: string; state: StageState }[] {
+  const ok = (tool: string) => run?.plan.some((s) => s.call.tool === tool && s.status === "ok") ?? false;
+  const foundRoles =
+    run?.plan.some(
+      (s) => s.call.tool === "db_search_opportunities" && s.status === "ok" && Array.isArray(s.result?.data) && (s.result?.data as unknown[]).length > 0
+    ) ?? false;
+  const done = [
+    foundRoles,
+    ok("crustdata_person_enrich") || ok("draft_email"),
+    ok("draft_email"),
+    run ? ["completed", "cancelled"].includes(run.status) || ok("send_email") : false,
+    ok("send_email"),
+  ];
+  const labels = ["Discover", "Contact", "Personalize", "Approve", "Send"];
+  const firstOpen = done.findIndex((d) => !d);
+  return labels.map((label, i) => {
+    let state: StageState = done[i] ? "done" : "todo";
+    if (run && i === firstOpen) {
+      if (run.status === "failed") state = "failed";
+      else if (run.status === "executing" || run.status === "awaiting_approval") state = "active";
+    }
+    if (run?.status === "cancelled" && i === 3) state = "failed";
+    return { label, state };
+  });
 }
 
 // ---------- Page ----------
 
 export default function AgentPage() {
   const queryClient = useQueryClient();
-  const [prompt, setPrompt] = useState(
-    "Find 1 ML internship from my saved opportunities and draft a personalized outreach email to a hiring contact."
-  );
-  const [currentRun, setCurrentRun] = useState<AgentRun | null>(null);
+  const [prompt, setPrompt] = useState(PRESET_GOALS[0]);
+  const [runId, setRunId] = useState<string | null>(null);
   const [editedSubject, setEditedSubject] = useState("");
   const [editedBody, setEditedBody] = useState("");
-  const [runError, setRunError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const leadsQuery = useQuery({
     queryKey: ["agent-leads"],
     queryFn: async () => (await api.get<OutreachLead[]>("/agent/leads")).data,
   });
 
-  const startRunMutation = useMutation({
-    mutationFn: async () => {
-      setRunError(null);
-      const res = await api.post<AgentRun>("/agent/run", {
-        prompt,
-        max_steps: 8,
-        credit_budget: 20.0,
-        dry_run: true,
-      });
-      return res.data;
-    },
-    onSuccess: (run) => {
-      setCurrentRun(run);
-      if (run.pending_approval) {
-        setEditedSubject(run.pending_approval.subject);
-        setEditedBody(run.pending_approval.body);
-      }
+  const runQuery = useQuery({
+    queryKey: ["agent-run", runId],
+    enabled: !!runId,
+    queryFn: async () => (await api.get<AgentRun>(`/agent/run/${runId}`)).data,
+    refetchInterval: (q) => (q.state.data?.status === "executing" || !q.state.data ? 1000 : false),
+  });
+  const run = runId ? runQuery.data ?? null : null;
+
+  // Prefill the editable draft when the agent pauses for approval.
+  const pending = run?.pending_approval ?? null;
+  useEffect(() => {
+    if (pending) {
+      setEditedSubject(pending.subject);
+      setEditedBody(pending.body);
       queryClient.invalidateQueries({ queryKey: ["agent-leads"] });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.id, pending?.subject, pending?.body]);
+
+  const startRun = useMutation({
+    mutationFn: async () =>
+      (await api.post<AgentRun>("/agent/run", { prompt, max_steps: 10, credit_budget: 20, dry_run: true })).data,
+    onMutate: () => setActionError(null),
+    onSuccess: (newRun) => {
+      queryClient.setQueryData(["agent-run", newRun.id], newRun);
+      setRunId(newRun.id);
     },
-    onError: (err) => setRunError(extractError(err, "Run failed")),
+    onError: (err) => setActionError(extractError(err, "Could not start the agent")),
   });
 
-  const approveMutation = useMutation({
-    mutationFn: async ({ approved }: { approved: boolean }) => {
-      if (!currentRun) throw new Error("No active run");
-      const res = await api.post<AgentRun>(
-        `/agent/run/${currentRun.id}/approve`,
-        {
+  const decide = useMutation({
+    mutationFn: async (approved: boolean) =>
+      (
+        await api.post<AgentRun>(`/agent/run/${runId}/approve`, {
           approved,
           edited_subject: approved ? editedSubject : null,
           edited_body: approved ? editedBody : null,
-        }
-      );
-      return res.data;
-    },
-    onSuccess: (run) => {
-      setCurrentRun(run);
+        })
+      ).data,
+    onMutate: () => setActionError(null),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["agent-run", updated.id], updated);
       queryClient.invalidateQueries({ queryKey: ["agent-leads"] });
     },
-    onError: (err) => setRunError(extractError(err, "Approval failed")),
+    onError: (err) => setActionError(extractError(err, "Could not record your decision")),
   });
 
-  const isRunning = startRunMutation.isPending || approveMutation.isPending;
+  const busy = startRun.isPending || run?.status === "executing";
+  const stages = computeStages(run);
   const leads = leadsQuery.data ?? [];
-  const traceStatus = currentRun ? STATUS_STYLES[currentRun.status] : null;
+  const lastStep = run?.plan[run.plan.length - 1];
+  const thinking = run?.status === "executing" && lastStep?.status !== "running";
+  const finalEmail = run?.final_email ?? null;
 
   return (
-    <div className="space-y-6 text-slate-900 dark:text-slate-100">
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Bot size={22} />
-          Career Outreach Agent
-        </h1>
-        <p className="text-slate-600 dark:text-slate-400 mt-1">
-          Give the agent a goal. It plans, finds contacts, drafts emails, and
-          pauses for your approval before sending anything.
-        </p>
-      </div>
+    <div className="page-wrap">
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">Outreach agent</div>
+          <h1 className="page-title">Tell the agent what you want next.</h1>
+          <p className="page-description">
+            It finds a matching opportunity, identifies who to contact, and writes a personalized email.
+            Nothing is sent until you approve it.
+          </p>
+        </div>
+        <span className="page-context" title="Emails are simulated. Nothing is delivered.">
+          <ShieldCheck size={13} aria-hidden="true" /> Demo mode · no real emails
+        </span>
+      </header>
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
-        <label className="text-sm font-medium block">Your goal</label>
+      {/* Goal input */}
+      <section className="panel panel-pad agent-goal">
+        <label className="field-label" htmlFor="agent-goal">
+          Your goal
+        </label>
         <textarea
-          className="w-full min-h-[100px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
+          id="agent-goal"
+          className="field agent-textarea"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          disabled={isRunning}
-          placeholder="Describe what you want the agent to do..."
+          disabled={busy}
+          placeholder="e.g. Find a data science internship and reach out to the hiring manager"
         />
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-xs text-slate-600 dark:text-slate-400">
-            Dry-run mode (no real emails) &bull; Budget 20 credits &bull; Max 8 steps
-          </div>
-          <button
-            onClick={() => startRunMutation.mutate()}
-            disabled={isRunning || !prompt.trim()}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-slate-200 dark:text-slate-900 text-white text-sm font-medium disabled:opacity-50 transition"
-          >
-            {startRunMutation.isPending ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                Running agent&hellip;
-              </>
-            ) : (
-              <>
-                <Bot size={16} />
-                Run agent
-              </>
-            )}
+        <div className="agent-presets">
+          {PRESET_GOALS.map((g) => (
+            <button key={g} type="button" className="agent-chip" disabled={busy} onClick={() => setPrompt(g)}>
+              {g.split(" and ")[0]}
+            </button>
+          ))}
+        </div>
+        <div className="agent-goal-footer">
+          <span className="section-caption">Uses your profile for personalization · up to 10 steps · 20-credit budget</span>
+          <button className="button" onClick={() => startRun.mutate()} disabled={busy || prompt.trim().length < 5}>
+            {busy ? <Loader2 size={15} className="spin" /> : <Bot size={15} />}
+            {busy ? "Agent working…" : "Run agent"}
           </button>
         </div>
-        {runError && (
-          <div className="text-sm text-red-600 dark:text-red-400 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-3 py-2">
-            {runError}
-          </div>
-        )}
-      </div>
+        {actionError && <div className="alert alert-error">{actionError}</div>}
+      </section>
 
-      {currentRun && (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h2 className="font-semibold flex items-center gap-2">
-              <Activity size={18} />
-              Agent trace
-            </h2>
-            <div className="flex items-center gap-3 text-sm">
-              {traceStatus && (
-                <span
-                  className={clsx(
-                    "px-2 py-0.5 rounded-full text-xs font-medium",
-                    traceStatus.className
-                  )}
-                >
-                  {traceStatus.label}
-                </span>
-              )}
-              <span className="text-slate-600 dark:text-slate-400 flex items-center gap-1">
-                <Zap size={14} />
-                {currentRun.credits_used.toFixed(2)} credits
+      {/* Journey stages */}
+      {run && (
+        <ol className="agent-stages" aria-label="Agent progress">
+          {stages.map((s, i) => (
+            <li key={s.label} className={`agent-stage agent-stage-${s.state}`}>
+              <span className="agent-stage-dot">
+                {s.state === "done" ? <CheckCircle2 size={14} /> : s.state === "failed" ? <XCircle size={14} /> : s.state === "active" ? <Loader2 size={14} className="spin" /> : i + 1}
               </span>
-            </div>
-          </div>
-
-          <ol className="space-y-2">
-            {currentRun.plan.map((step) => {
-              const { Icon, className } = stepStatusIcon(step.status);
-              const ToolIcon = TOOL_ICONS[step.call.tool] ?? ArrowRight;
-              const summary = summarizeStepResult(step.result);
-              return (
-                <li
-                  key={step.index}
-                  className="flex items-start gap-3 p-3 rounded-lg border border-slate-100 dark:border-slate-800"
-                >
-                  <Icon size={18} className={clsx("mt-0.5 shrink-0", className)} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-                      <ToolIcon size={14} className="text-slate-400" />
-                      {TOOL_LABELS[step.call.tool] ?? step.call.tool}
-                    </div>
-                    {summary && (
-                      <div
-                        className={clsx(
-                          "text-xs mt-1 truncate",
-                          step.result && !step.result.ok
-                            ? "text-red-500"
-                            : "text-slate-600 dark:text-slate-400"
-                        )}
-                      >
-                        {summary}
-                      </div>
-                    )}
-                    {step.result?.duration_ms != null && (
-                      <div className="text-xs text-slate-400 mt-1">
-                        {step.result.duration_ms}ms
-                      </div>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-
-          {currentRun.error && (
-            <div className="text-sm text-red-600 dark:text-red-400">
-              {currentRun.error}
-            </div>
-          )}
-        </div>
+              {s.label}
+            </li>
+          ))}
+        </ol>
       )}
 
-      {currentRun?.pending_approval && (
-        <div className="rounded-xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <Clock size={18} className="text-amber-600 dark:text-amber-400" />
-            <h2 className="font-semibold">Approval required</h2>
-          </div>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            The agent has drafted an email. Review it below, edit if needed, then
-            approve to send. Nothing is sent until you click Approve.
-          </p>
-
-          <div className="grid gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block">
-                To
-              </label>
-              <div className="text-sm mt-0.5 text-slate-900 dark:text-slate-100">
-                {currentRun.pending_approval.recipient_name ?? "Contact"}{" "}
-                &lt;{currentRun.pending_approval.recipient_email}&gt;
+      {run && (
+        <div className="agent-grid">
+          {/* Live trace */}
+          <section className="panel">
+            <div className="panel-heading">
+              <div>
+                <h2 className="section-title">Agent trace</h2>
+                <p className="section-caption">Each decision the agent made, live</p>
+              </div>
+              <div className="agent-trace-meta">
+                <span className={`status-pill ${RUN_STATUS[run.status].cls}`}>{RUN_STATUS[run.status].label}</span>
+                <span className="agent-credits" title="Crustdata credits spent this run">
+                  <Zap size={12} /> {run.credits_used.toFixed(2)} credits
+                </span>
               </div>
             </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block">
-                Subject
-              </label>
-              <input
-                type="text"
-                className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm"
-                value={editedSubject}
-                onChange={(e) => setEditedSubject(e.target.value)}
-                disabled={approveMutation.isPending}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block">
-                Body
-              </label>
-              <textarea
-                className="w-full mt-1 min-h-[200px] px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm font-mono"
-                value={editedBody}
-                onChange={(e) => setEditedBody(e.target.value)}
-                disabled={approveMutation.isPending}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => approveMutation.mutate({ approved: true })}
-              disabled={approveMutation.isPending}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium disabled:opacity-50 transition"
-            >
-              {approveMutation.isPending ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  Sending&hellip;
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 size={16} />
-                  Approve &amp; send
-                </>
+            <ol className="agent-trace">
+              {run.plan.map((step) => {
+                const meta = TOOL_META[step.call.tool] ?? { label: step.call.tool, Icon: CircleDot };
+                const summary = summarize(step);
+                return (
+                  <li key={step.index} className={`agent-step agent-step-${step.status}`}>
+                    <span className="agent-step-icon">
+                      {step.status === "running" ? <Loader2 size={15} className="spin" /> : step.status === "ok" ? <CheckCircle2 size={15} /> : step.status === "failed" ? <XCircle size={15} /> : <CircleDot size={15} />}
+                    </span>
+                    <div className="agent-step-body">
+                      <div className="agent-step-title">
+                        <meta.Icon size={13} aria-hidden="true" /> {meta.label}
+                        {step.result?.duration_ms != null && <span className="agent-step-time">{(step.result.duration_ms / 1000).toFixed(1)}s</span>}
+                        {!!step.result?.credits_spent && <span className="agent-step-time">{step.result.credits_spent.toFixed(2)} cr</span>}
+                      </div>
+                      {step.call.rationale && <p className="agent-step-why">{step.call.rationale}</p>}
+                      {summary && <p className={step.result?.ok === false ? "agent-step-out agent-step-err" : "agent-step-out"}>{summary}</p>}
+                    </div>
+                  </li>
+                );
+              })}
+              {(thinking || (startRun.isPending && !run.plan.length)) && (
+                <li className="agent-step agent-step-running">
+                  <span className="agent-step-icon"><Loader2 size={15} className="spin" /></span>
+                  <div className="agent-step-body"><div className="agent-step-title">Thinking about the next step…</div></div>
+                </li>
               )}
-            </button>
-            <button
-              onClick={() => approveMutation.mutate({ approved: false })}
-              disabled={approveMutation.isPending}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 text-sm font-medium disabled:opacity-50 transition"
-            >
-              <XCircle size={16} />
-              Reject
-            </button>
-          </div>
+            </ol>
+            {run.status === "failed" && run.error && <div className="alert alert-error agent-inline-alert">{run.error}</div>}
+          </section>
+
+          {/* Result: opportunity + contact */}
+          <section className="panel panel-pad agent-result">
+            <h2 className="section-title">What the agent found</h2>
+            {finalEmail ? (
+              <>
+                <div className="agent-fact">
+                  <span className="agent-fact-label">Opportunity</span>
+                  <span className="agent-fact-value">{finalEmail.role ?? "—"}</span>
+                  <span className="agent-fact-sub">
+                    {finalEmail.company}
+                    {finalEmail.opportunity_url && (
+                      <a className="text-link" href={finalEmail.opportunity_url} target="_blank" rel="noreferrer">
+                        {" "}View posting <ExternalLink size={11} />
+                      </a>
+                    )}
+                  </span>
+                </div>
+                <div className="agent-fact">
+                  <span className="agent-fact-label">Contact</span>
+                  <span className="agent-fact-value">{finalEmail.recipient_name || "Hiring team"}</span>
+                  <span className="agent-fact-sub">
+                    {finalEmail.contact_title ? `${finalEmail.contact_title} · ` : ""}
+                    {finalEmail.recipient_email}
+                  </span>
+                  <SourceTag source={finalEmail.contact_source} />
+                </div>
+              </>
+            ) : (
+              <p className="section-caption">
+                {run.status === "executing" ? "Results appear here as the agent works." : "No draft was produced in this run."}
+              </p>
+            )}
+          </section>
         </div>
       )}
 
-      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6">
-        <h2 className="font-semibold mb-4 flex items-center gap-2">
-          <Mail size={18} />
-          Outreach leads ({leads.length})
-        </h2>
+      {/* Human approval */}
+      {run?.status === "awaiting_approval" && pending && (
+        <section className="panel panel-pad agent-approval">
+          <div className="agent-approval-head">
+            <Clock size={17} aria-hidden="true" />
+            <div>
+              <h2 className="section-title">Your approval is required</h2>
+              <p className="section-caption">
+                Review and edit the draft. The agent cannot send on its own. Only your click sends exactly what you see here.
+              </p>
+            </div>
+          </div>
+          <div className="agent-to">
+            <span className="field-label">To</span>
+            <span>
+              {pending.recipient_name ? `${pending.recipient_name} ` : ""}&lt;{pending.recipient_email}&gt;
+            </span>
+            <SourceTag source={pending.contact_source} />
+          </div>
+          <label className="field-label" htmlFor="agent-subject">Subject</label>
+          <input id="agent-subject" className="field" value={editedSubject} onChange={(e) => setEditedSubject(e.target.value)} disabled={decide.isPending} />
+          <label className="field-label agent-gap" htmlFor="agent-body">Body</label>
+          <textarea id="agent-body" className="field agent-body" value={editedBody} onChange={(e) => setEditedBody(e.target.value)} disabled={decide.isPending} />
+          <div className="agent-approval-actions">
+            <button className="button" onClick={() => decide.mutate(true)} disabled={decide.isPending || !editedBody.trim() || !editedSubject.trim()}>
+              {decide.isPending ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />} Approve &amp; send
+            </button>
+            <button className="button button-quiet" onClick={() => decide.mutate(false)} disabled={decide.isPending}>
+              <XCircle size={15} /> Reject
+            </button>
+          </div>
+        </section>
+      )}
+
+      {run?.status === "completed" && (
+        <div className="alert alert-success agent-outcome">
+          <CheckCircle2 size={15} /> Approved and sent to {finalEmail?.recipient_email}. Demo mode: delivery was simulated and nothing left this machine. The lead is marked <strong>sent</strong> below.
+        </div>
+      )}
+      {run?.status === "cancelled" && (
+        <div className="alert alert-info agent-outcome">You rejected the draft. Nothing was sent, and the lead is marked rejected.</div>
+      )}
+
+      {/* Lead history */}
+      <section className="panel agent-leads">
+        <div className="panel-heading">
+          <div>
+            <h2 className="section-title">Outreach history</h2>
+            <p className="section-caption">Every lead the agent created, with where the contact came from</p>
+          </div>
+          <span className="status-pill status-neutral">{leads.length} leads</span>
+        </div>
         {leadsQuery.isLoading ? (
-          <div className="text-sm text-slate-600 dark:text-slate-400">Loading&hellip;</div>
+          <div className="panel-pad"><div className="skeleton" style={{ height: 80 }} /></div>
         ) : leads.length === 0 ? (
-          <div className="text-sm text-slate-600 dark:text-slate-400">
-            No leads yet. Run the agent above.
+          <div className="empty-state">
+            <div>
+              <div className="empty-icon"><Mail size={20} /></div>
+              <p className="empty-title">No outreach yet</p>
+              <p className="empty-copy">Run the agent above. Each draft you review is saved here with its status.</p>
+            </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="table-wrap agent-table">
+            <table className="data-table">
               <thead>
-                <tr className="text-left border-b border-slate-200 dark:border-slate-700">
-                  <th className="py-2 font-medium text-slate-700 dark:text-slate-300">Contact</th>
-                  <th className="py-2 font-medium text-slate-700 dark:text-slate-300">Email</th>
-                  <th className="py-2 font-medium text-slate-700 dark:text-slate-300">Subject</th>
-                  <th className="py-2 font-medium text-slate-700 dark:text-slate-300">Status</th>
-                  <th className="py-2 font-medium text-right">Credits</th>
+                <tr>
+                  <th>Opportunity</th>
+                  <th>Contact</th>
+                  <th>Source</th>
+                  <th>Subject</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: "right" }}>Credits</th>
                 </tr>
               </thead>
               <tbody>
                 {leads.map((lead) => {
-                  const s = STATUS_STYLES[lead.status];
+                  const s = LEAD_STATUS[lead.status] ?? { label: lead.status, cls: "status-neutral" };
                   return (
-                    <tr
-                      key={lead.id}
-                      className="border-b border-slate-100 dark:border-slate-800"
-                    >
-                      <td className="py-2">
-                        <div className="font-medium">
-                          {lead.contact_name ?? "\u2014"}
-                        </div>
-                        <div className="text-xs text-slate-600 dark:text-slate-400">
-                          {lead.contact_title ?? ""}
-                        </div>
-                      </td>
-                      <td className="py-2 text-xs">
-                        {lead.contact_email ?? "\u2014"}
-                      </td>
-                      <td className="py-2 text-xs max-w-[240px] truncate">
-                        {lead.email_subject ?? "\u2014"}
-                      </td>
-                      <td className="py-2">
-                        <span
-                          className={clsx(
-                            "px-2 py-0.5 rounded-full text-xs",
-                            s?.className ?? "status-neutral"
+                    <tr key={lead.id}>
+                      <td>
+                        <div className="agent-cell-main">{lead.role ?? "—"}</div>
+                        <div className="agent-cell-sub">
+                          {lead.company ?? ""}
+                          {lead.opportunity_url && (
+                            <a href={lead.opportunity_url} target="_blank" rel="noreferrer" className="text-link"> <ArrowUpRight size={11} /></a>
                           )}
-                        >
-                          {s?.label ?? lead.status}
-                        </span>
+                        </div>
                       </td>
-                      <td className="py-2 text-right text-xs">
-                        {lead.credit_cost.toFixed(2)}
+                      <td>
+                        <div className="agent-cell-main">{lead.contact_name ?? "Hiring team"}</div>
+                        <div className="agent-cell-sub">{lead.contact_email ?? "—"}</div>
                       </td>
+                      <td><SourceTag source={lead.contact_source} /></td>
+                      <td className="agent-cell-subject">{lead.email_subject ?? "—"}</td>
+                      <td><span className={`status-pill ${s.cls}`} title={lead.error_message ?? undefined}>{s.label}</span></td>
+                      <td style={{ textAlign: "right" }}>{lead.credit_cost.toFixed(2)}</td>
                     </tr>
                   );
                 })}
@@ -491,8 +521,7 @@ export default function AgentPage() {
             </table>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
-

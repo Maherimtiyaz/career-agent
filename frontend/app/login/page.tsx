@@ -20,7 +20,7 @@ export default function LoginPage() {
     setError("");
     try {
       await login(email, password);
-      router.push("/dashboard");
+      router.push("/dashboard/agent");
     } catch (requestError: unknown) {
       setError(
         axios.isAxiosError(requestError) && !requestError.response

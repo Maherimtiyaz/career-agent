@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   BarChart3,
+  Bot,
   BriefcaseBusiness,
   Compass,
   LayoutDashboard,
@@ -16,8 +17,9 @@ import {
 import { isLoggedIn, logout } from "@/lib/auth";
 
 const nav = [
+  { href: "/dashboard/agent", label: "Outreach agent", icon: Bot, badge: "AI" },
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
-  { href: "/dashboard/ai", label: "AI Picks", icon: Sparkles, badge: "MATCHED" },
+  { href: "/dashboard/ai", label: "AI Picks", icon: Sparkles },
   { href: "/dashboard/opportunities", label: "Opportunities", icon: Compass },
   { href: "/dashboard/applications", label: "Applications", icon: BriefcaseBusiness },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },

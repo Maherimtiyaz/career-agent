@@ -15,3 +15,7 @@ backend/.env
 frontend/.env
 # Local ML model cache
 backend/data/fastembed_cache/
+
+# Next.js generated
+frontend/next-env.d.ts
+*.tsbuildinfo
