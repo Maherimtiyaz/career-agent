@@ -1,11 +1,12 @@
-"""Email outreach - AI-generated cold emails for job applications."""
+"""Email outreach - AI-generated cold emails for tracked applications."""
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.llm_client import LLMProviderError, chat
+from app.agents.tools import DRAFT_RULES, _parse_draft, applicant_profile_block
 from app.auth.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.application import Application
@@ -22,106 +23,43 @@ class DraftResponse(BaseModel):
     subject: str
     body: str
     to: str | None
+    generated: bool = True  # False = template fallback, no LLM reachable
 
 
 async def generate_email(user: User, app: Application) -> dict:
-    """Call Anthropic API to generate a personalized cold email."""
-    skills = getattr(user, "skills", "") or "software development"
-    target_roles = getattr(user, "target_roles", "") or "internship"
-    bio = getattr(user, "bio", "") or ""
-    college = getattr(user, "college", "") or "university"
-    grad_year = getattr(user, "graduation_year", "") or ""
-    name = user.full_name or user.email.split("@")[0]
-    github = getattr(user, "github_url", "") or ""
-    linkedin = getattr(user, "linkedin_url", "") or ""
+    """Draft a cold email with the same LLM chain and prompt rules as the agent."""
+    prompt = f"""Write a cold outreach email from a job seeker.
 
-    links = []
-    if github:
-        links.append(f"GitHub: {github}")
-    if linkedin:
-        links.append(f"LinkedIn: {linkedin}")
-    links_str = " | ".join(links) if links else ""
+APPLICANT:
+{applicant_profile_block(user)}
 
-    prompt = f"""Write a professional, concise cold email from a student applying for a job/internship.
-
-Applicant details:
-- Name: {name}
-- College: {college}{" (" + grad_year + ")" if grad_year else ""}
-- Skills: {skills}
-- Target roles: {target_roles}
-- Bio: {bio}
-{f"- Links: {links_str}" if links_str else ""}
-
-Job details:
+JOB:
 - Role: {app.role}
 - Company: {app.company}
 - Job link: {app.job_link or "not provided"}
 - Notes: {app.notes or "none"}
 
-Write a cold email with:
-1. Subject line (prefix with SUBJECT:)
-2. Email body starting on the next line
-
-Rules:
-- Keep it under 150 words
-- Sound human, not like a template
-- Mention one specific thing about the company or role
-- End with a clear ask (15-minute call or to review application)
-- Do not use generic phrases like "I hope this email finds you well"
-- Sign off with the applicant name and links if available
-
-Return ONLY the subject line prefixed with SUBJECT: and then the email body. Nothing else."""
-
+{DRAFT_RULES}"""
+    fallback_subject = f"Application for {app.role} at {app.company}"
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "Content-Type": "application/json",
-                    "anthropic-version": "2023-06-01",
-                },
-                json={
-                    "model": "claude-sonnet-4-6",
-                    "max_tokens": 500,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            if resp.status_code != 200:
-                raise ValueError(f"API error: {resp.status_code}")
+        response = await chat(
+            messages=[{"role": "user", "content": prompt}], temperature=0.7, max_tokens=600
+        )
+        subject, body = _parse_draft(response.content or "", fallback_subject)
+        if body:
+            return {"subject": subject, "body": body, "generated": True}
+    except LLMProviderError:
+        pass
 
-            data = resp.json()
-            text = data["content"][0]["text"].strip()
-
-            lines = text.split("\n")
-            subject = ""
-            body_lines = []
-            for i, line in enumerate(lines):
-                if line.startswith("SUBJECT:"):
-                    subject = line.replace("SUBJECT:", "").strip()
-                else:
-                    body_lines.extend(lines[i:])
-                    break
-
-            body = "\n".join(body_lines).strip()
-            if not subject:
-                subject = f"Application for {app.role} at {app.company}"
-
-            return {"subject": subject, "body": body}
-
-    except Exception as e:
-        subject = f"Application for {app.role} at {app.company}"
-        body = f"""Hi,
-
-I am {name}, a {college} student{" graduating in " + grad_year if grad_year else ""} with skills in {skills}.
-
-I came across the {app.role} opportunity at {app.company} and I am very interested. My background in {skills.split(",")[0].strip() if skills else "software development"} aligns well with this role.
-
-Would you have 15 minutes for a quick call to discuss further?
-
-Best regards,
-{name}
-{links_str}"""
-        return {"subject": subject, "body": body}
+    # Clearly-labelled template fallback when no LLM provider is reachable.
+    name = user.full_name or user.email.split("@")[0]
+    skills = getattr(user, "skills", "") or "software development"
+    body = (
+        f"Hi,\n\nI'm {name}, and I'm interested in the {app.role} role at {app.company}. "
+        f"My background in {skills.split(',')[0].strip()} lines up well with it.\n\n"
+        f"Would you have 15 minutes for a quick call?\n\nBest regards,\n{name}"
+    )
+    return {"subject": fallback_subject, "body": body, "generated": False}
 
 
 @router.post("/draft", response_model=DraftResponse)
@@ -146,4 +84,5 @@ async def draft_email(
         subject=draft["subject"],
         body=draft["body"],
         to=app.hr_contact or None,
+        generated=draft["generated"],
     )

@@ -3,20 +3,25 @@
 Every tool:
   - Receives a ToolContext (db session, user, run id, clients).
   - Returns a ToolResult (from schemas.py) — never raises to the orchestrator.
-  - Has a matching entry in TOOL_SCHEMAS so the LLM planner can select it.
 
-The `request_approval` tool does NOT block. It returns ok=True with an
-`approval_request` payload; the orchestrator sees this and pauses the run.
-That separation keeps the tool layer stateless and testable.
+The LLM can only see TOOL_SCHEMAS (5 tools). `send_email` is deliberately NOT
+exposed to the LLM: it is executed by the orchestrator, and only after a human
+approves the draft. The model has no way to send anything on its own.
+
+Contact provenance: every email address a tool returns is recorded in
+`ctx.known_contacts` with its source. `draft_email` refuses any recipient that
+no tool produced in this run — a hallucinated address can never reach the
+approval screen.
 """
 from __future__ import annotations
 
-import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,13 +30,13 @@ from app.agents.crustdata import CrustdataClient, CrustdataError
 from app.agents.llm_client import LLMProviderError, chat
 from app.agents.schemas import (
     ApprovalRequest,
+    ContactSource,
     ToolName,
     ToolResult,
 )
 from app.models.opportunity import Opportunity
 from app.models.outreach_lead import OutreachLead, OutreachStatus
 from app.models.user import User
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +54,17 @@ class ToolContext:
     dry_run: bool = True
     crustdata: CrustdataClient | None = None
     credits_used: float = 0.0
-    collected_leads: list[dict[str, Any]] = field(default_factory=list)
+    # email (lowercased) -> ContactSource, filled by tools that return emails
+    known_contacts: dict[str, ContactSource] = field(default_factory=dict)
+    # opportunity id -> url, so the approval card can link the posting
+    seen_opportunities: dict[str, dict[str, Any]] = field(default_factory=dict)
+    last_draft: dict[str, Any] | None = None
+    lead_id: UUID | None = None
     pending_approval: ApprovalRequest | None = None
 
 
 # ---------------------------------------------------------------------------
-# OpenAI function-calling schemas
+# OpenAI function-calling schemas (what the LLM planner can choose from)
 # ---------------------------------------------------------------------------
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -63,14 +73,15 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": ToolName.DB_SEARCH_OPPORTUNITIES.value,
             "description": (
-                "Search the user's tracked opportunities database by keyword "
-                "(matches title, organization, description, tags). Use this "
-                "FIRST before calling Crustdata — it's free and fast."
+                "Search the user's saved opportunities by keywords (matches "
+                "title, company, description, tags; results ranked by relevance). "
+                "Free. Results may include `application_email` taken from the "
+                "job posting itself."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search keywords"},
+                    "query": {"type": "string", "description": "Keywords, e.g. 'machine learning intern'"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
                 },
                 "required": ["query"],
@@ -82,14 +93,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": ToolName.CRUSTDATA_PERSON_SEARCH.value,
             "description": (
-                "Find contacts (hiring managers, recruiters, engineers) at a "
-                "specific company. Use this after DB search to identify a "
-                "human to email. Costs ~0.03 credits per result."
+                "Find people (hiring managers, recruiters, engineering leads) at "
+                "a specific company. Returns names + LinkedIn URLs, no emails. "
+                "~0.03 credits per result."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "Job title to search for, e.g. 'Engineering Manager'"},
+                    "title": {"type": "string", "description": "Job title, e.g. 'Engineering Manager' or 'Recruiter'"},
                     "company": {"type": "string", "description": "Target company name"},
                     "location": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 3},
@@ -103,15 +114,12 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": ToolName.CRUSTDATA_PERSON_ENRICH.value,
             "description": (
-                "Get full profile (email, headline) for ONE contact found via "
-                "person_search. Only call this for contacts you intend to email. "
-                "Costs ~2.0 credits."
+                "Get the email and profile for ONE person found via "
+                "crustdata_person_search. ~2 credits — only for the person you will email."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "linkedin_url": {"type": "string"},
-                },
+                "properties": {"linkedin_url": {"type": "string"}},
                 "required": ["linkedin_url"],
             },
         },
@@ -121,18 +129,21 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": ToolName.DRAFT_EMAIL.value,
             "description": (
-                "Write a personalized cold email to a contact about a specific "
-                "opportunity. Returns subject + body. Does NOT send anything."
+                "Write a personalized outreach email using the user's profile. "
+                "contact_email MUST be an address returned by a previous tool "
+                "(application_email or crustdata_person_enrich). Sends nothing."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "contact_email": {"type": "string"},
                     "contact_name": {"type": "string"},
                     "contact_title": {"type": "string"},
-                    "contact_email": {"type": "string"},
+                    "contact_linkedin": {"type": "string"},
                     "company": {"type": "string"},
                     "role": {"type": "string"},
-                    "context": {"type": "string", "description": "Why this person/role was chosen"},
+                    "opportunity_id": {"type": "string", "description": "id from db_search_opportunities"},
+                    "context": {"type": "string", "description": "Why this person and role fit the user"},
                 },
                 "required": ["contact_email", "company", "role"],
             },
@@ -143,264 +154,343 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": ToolName.REQUEST_APPROVAL.value,
             "description": (
-                "ALWAYS call this before sending any email. Pauses the run and "
-                "asks the user to approve the draft. The user sees the exact "
-                "recipient and body."
+                "Save the lead and hand the latest draft to the user for review. "
+                "Takes no arguments — the exact drafted email is shown. The run "
+                "pauses here; only the user can send."
             ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "recipient_email": {"type": "string"},
-                    "recipient_name": {"type": "string"},
-                    "subject": {"type": "string"},
-                    "body": {"type": "string"},
-                },
-                "required": ["recipient_email", "subject", "body"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": ToolName.SEND_EMAIL.value,
-            "description": (
-                "Send the email. Only call this AFTER request_approval returned "
-                "ok and the user approved. In dry-run mode, this is a no-op."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "recipient_email": {"type": "string"},
-                    "subject": {"type": "string"},
-                    "body": {"type": "string"},
-                },
-                "required": ["recipient_email", "subject", "body"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": ToolName.SAVE_LEAD.value,
-            "description": (
-                "Persist a lead (contact + drafted email) so it appears in the "
-                "outreach_leads table. Use this after draft_email succeeds, "
-                "before request_approval."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "contact_name": {"type": "string"},
-                    "contact_title": {"type": "string"},
-                    "contact_email": {"type": "string"},
-                    "contact_linkedin": {"type": "string"},
-                    "opportunity_id": {"type": "string"},
-                    "email_subject": {"type": "string"},
-                    "email_draft": {"type": "string"},
-                },
-                "required": ["contact_email"],
-            },
+            "parameters": {"type": "object", "properties": {}},
         },
     },
 ]
 
 
 # ---------------------------------------------------------------------------
+# Opportunity search helpers
+# ---------------------------------------------------------------------------
+
+_STOPWORDS = {
+    "a", "an", "the", "and", "or", "for", "in", "at", "of", "to", "with", "on",
+    "find", "me", "my", "i", "saved", "any", "some", "one", "role", "roles",
+    "job", "jobs", "position", "positions", "opportunity", "opportunities",
+}
+_EXPANSIONS = {
+    "ml": ["machine learning"],
+    "ai": ["artificial intelligence"],
+    "intern": ["internship"],
+    "internship": ["intern"],
+    "swe": ["software engineer"],
+}
+
+
+def _search_terms(query: str) -> list[str]:
+    """Split a free-text query into match terms (with a few synonyms)."""
+    words = [w for w in re.findall(r"[a-z0-9+#.]+", query.lower()) if w not in _STOPWORDS]
+    terms: list[str] = []
+    for w in words:
+        if (len(w) >= 2 or w in _EXPANSIONS) and w not in terms:
+            terms.append(w)
+        for extra in _EXPANSIONS.get(w, []):
+            if extra not in terms:
+                terms.append(extra)
+    return terms
+
+
+def _score_opportunity(terms: list[str], title: str, other: str) -> int:
+    """Whole-word matches: 3 points in the title, 1 point elsewhere."""
+    score = 0
+    for term in terms:
+        pat = re.compile(rf"\b{re.escape(term)}\b", re.IGNORECASE)
+        if pat.search(title or ""):
+            score += 3
+        elif pat.search(other or ""):
+            score += 1
+    return score
+
+
+def _application_email(tags: str | None) -> str | None:
+    for part in (tags or "").split(","):
+        part = part.strip()
+        if part.lower().startswith("email:") and "@" in part:
+            return part.split(":", 1)[1].strip()
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-async def _db_search_opportunities(
-    args: dict[str, Any], ctx: ToolContext
-) -> ToolResult:
+async def _db_search_opportunities(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     query = (args.get("query") or "").strip()
-    if not query:
+    terms = _search_terms(query)
+    if not terms:
         return ToolResult(
-            tool=ToolName.DB_SEARCH_OPPORTUNITIES,
-            ok=False,
-            error="query is required",
+            tool=ToolName.DB_SEARCH_OPPORTUNITIES, ok=False, error="query is required"
         )
-    limit = min(int(args.get("limit", 5)), 20)
-    pattern = f"%{query}%"
-    stmt = (
-        select(Opportunity)
-        .where(
-            Opportunity.is_active.is_(True),
-            or_(
-                Opportunity.title.ilike(pattern),
-                Opportunity.organization.ilike(pattern),
-                Opportunity.description.ilike(pattern),
-                Opportunity.tags.ilike(pattern),
-            ),
-        )
-        .limit(limit)
-    )
+    limit = max(1, min(int(args.get("limit", 5) or 5), 20))
+
+    clauses = []
+    for term in terms:
+        p = f"%{term}%"
+        clauses += [
+            Opportunity.title.ilike(p),
+            Opportunity.organization.ilike(p),
+            Opportunity.description.ilike(p),
+            Opportunity.tags.ilike(p),
+        ]
+    stmt = select(Opportunity).where(Opportunity.is_active.is_(True), or_(*clauses)).limit(400)
     rows = (await ctx.session.execute(stmt)).scalars().all()
-    return ToolResult(
-        tool=ToolName.DB_SEARCH_OPPORTUNITIES,
-        ok=True,
-        data=[
-            {
-                "id": str(o.id),
-                "title": o.title,
-                "company": o.organization,
-                "url": o.url,
-                "location": o.location,
-                "is_remote": o.is_remote,
-                "source": o.source,
-            }
-            for o in rows
-        ],
-    )
+
+    scored = []
+    for o in rows:
+        other = " ".join(filter(None, [o.organization, o.description, o.tags]))
+        s = _score_opportunity(terms, o.title, other)
+        if s > 0:
+            scored.append((s, o))
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+
+    results = []
+    for score, o in scored[:limit]:
+        email = _application_email(o.tags)
+        if email:
+            ctx.known_contacts[email.lower()] = ContactSource.JOB_POSTING
+        item = {
+            "id": str(o.id),
+            "title": o.title,
+            "company": o.organization,
+            "url": o.url,
+            "location": o.location,
+            "is_remote": o.is_remote,
+            "source": o.source,
+            "application_email": email,
+            "relevance": score,
+        }
+        ctx.seen_opportunities[item["id"]] = item
+        results.append(item)
+
+    return ToolResult(tool=ToolName.DB_SEARCH_OPPORTUNITIES, ok=True, data=results)
 
 
-async def _crustdata_person_search(
-    args: dict[str, Any], ctx: ToolContext
-) -> ToolResult:
+def _crustdata_source(ctx: ToolContext) -> ContactSource:
+    if ctx.crustdata is not None and ctx.crustdata.dry_run:
+        return ContactSource.CRUSTDATA_SIMULATED
+    return ContactSource.CRUSTDATA
+
+
+async def _crustdata_person_search(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     if ctx.crustdata is None:
         return ToolResult(
-            tool=ToolName.CRUSTDATA_PERSON_SEARCH,
-            ok=False,
+            tool=ToolName.CRUSTDATA_PERSON_SEARCH, ok=False,
             error="Crustdata client not initialized for this run",
         )
+    if not args.get("title"):
+        return ToolResult(tool=ToolName.CRUSTDATA_PERSON_SEARCH, ok=False, error="title is required")
     before = ctx.crustdata.credits_used
     try:
         contacts = await ctx.crustdata.person_search(
             title=args["title"],
             company=args.get("company"),
             location=args.get("location"),
-            limit=int(args.get("limit", 3)),
-        )
-        spent = ctx.crustdata.credits_used - before
-        ctx.credits_used += spent
-        return ToolResult(
-            tool=ToolName.CRUSTDATA_PERSON_SEARCH,
-            ok=True,
-            data=contacts,
-            credits_spent=spent,
+            limit=int(args.get("limit", 3) or 3),
         )
     except CrustdataError as exc:
-        return ToolResult(
-            tool=ToolName.CRUSTDATA_PERSON_SEARCH, ok=False, error=str(exc)
-        )
+        return ToolResult(tool=ToolName.CRUSTDATA_PERSON_SEARCH, ok=False, error=str(exc))
+    spent = ctx.crustdata.credits_used - before
+    ctx.credits_used += spent
+    source = _crustdata_source(ctx).value
+    return ToolResult(
+        tool=ToolName.CRUSTDATA_PERSON_SEARCH,
+        ok=True,
+        data=[{**c, "source": source} for c in contacts],
+        credits_spent=spent,
+    )
 
 
-async def _crustdata_person_enrich(
-    args: dict[str, Any], ctx: ToolContext
-) -> ToolResult:
+async def _crustdata_person_enrich(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     if ctx.crustdata is None:
         return ToolResult(
-            tool=ToolName.CRUSTDATA_PERSON_ENRICH,
-            ok=False,
-            error="Crustdata client not initialized",
+            tool=ToolName.CRUSTDATA_PERSON_ENRICH, ok=False, error="Crustdata client not initialized"
         )
+    if not args.get("linkedin_url"):
+        return ToolResult(tool=ToolName.CRUSTDATA_PERSON_ENRICH, ok=False, error="linkedin_url is required")
     before = ctx.crustdata.credits_used
     try:
         profile = await ctx.crustdata.person_enrich(args["linkedin_url"])
-        spent = ctx.crustdata.credits_used - before
-        ctx.credits_used += spent
-        return ToolResult(
-            tool=ToolName.CRUSTDATA_PERSON_ENRICH,
-            ok=True,
-            data=profile,
-            credits_spent=spent,
-        )
     except CrustdataError as exc:
-        return ToolResult(
-            tool=ToolName.CRUSTDATA_PERSON_ENRICH, ok=False, error=str(exc)
-        )
+        return ToolResult(tool=ToolName.CRUSTDATA_PERSON_ENRICH, ok=False, error=str(exc))
+    spent = ctx.crustdata.credits_used - before
+    ctx.credits_used += spent
+    source = _crustdata_source(ctx)
+    if profile.get("email"):
+        ctx.known_contacts[profile["email"].lower()] = source
+    return ToolResult(
+        tool=ToolName.CRUSTDATA_PERSON_ENRICH,
+        ok=True,
+        data={**profile, "source": source.value},
+        credits_spent=spent,
+    )
 
 
-async def _draft_email(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    user = ctx.user
-    skills = getattr(user, "skills", None) or "software development"
-    target_roles = getattr(user, "target_roles", None) or "internship"
-    bio = getattr(user, "bio", None) or ""
-    college = getattr(user, "college", None) or "university"
-    grad_year = getattr(user, "graduation_year", None) or ""
+def _parse_draft(text: str, fallback_subject: str) -> tuple[str, str]:
+    """Split 'SUBJECT: ...\\n<body>' model output into (subject, body)."""
+    lines = (text or "").strip().splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().upper().startswith("SUBJECT:"):
+            return line.split(":", 1)[1].strip() or fallback_subject, "\n".join(lines[i + 1:]).strip()
+    return fallback_subject, "\n".join(lines).strip()
+
+
+def applicant_profile_block(user: User) -> str:
+    """Profile summary shared by every drafting prompt."""
     name = user.full_name or user.email.split("@")[0]
-    github = getattr(user, "github_url", None) or ""
-    linkedin = getattr(user, "linkedin_url", None) or ""
+    college = getattr(user, "college", None) or ""
+    grad = getattr(user, "graduation_year", None) or ""
+    links = " | ".join(
+        x for x in [
+            f"GitHub: {user.github_url}" if getattr(user, "github_url", None) else "",
+            f"LinkedIn: {user.linkedin_url}" if getattr(user, "linkedin_url", None) else "",
+        ] if x
+    )
+    lines = [
+        f"- Name: {name}",
+        f"- Education: {college}{f' ({grad})' if grad else ''}" if college else "",
+        f"- Skills: {getattr(user, 'skills', None) or 'software development'}",
+        f"- Target roles: {getattr(user, 'target_roles', None) or 'internship'}",
+        f"- Bio: {user.bio}" if getattr(user, "bio", None) else "",
+        f"- Links: {links}" if links else "",
+    ]
+    return "\n".join(line for line in lines if line)
 
-    links = []
-    if github:
-        links.append(f"GitHub: {github}")
-    if linkedin:
-        links.append(f"LinkedIn: {linkedin}")
-    links_str = " | ".join(links)
 
-    prompt = f"""Write a professional, concise cold email.
-
-APPLICANT:
-- Name: {name}
-- College: {college}{f' ({grad_year})' if grad_year else ''}
-- Skills: {skills}
-- Target roles: {target_roles}
-- Bio: {bio}
-{f'- Links: {links_str}' if links_str else ''}
-
-RECIPIENT:
-- Name: {args.get('contact_name', 'there')}
-- Title: {args.get('contact_title', 'unknown')}
-- Company: {args['company']}
-
-OPPORTUNITY: {args['role']}
-CONTEXT: {args.get('context', 'No additional context')}
-
-Rules:
+DRAFT_RULES = """Rules:
 - Under 150 words
-- Sound human, no generic phrases ("I hope this email finds you well")
-- Mention ONE specific thing about the company or role
-- Clear ask: 15-minute call or application review
-- Sign off with the applicant name
+- Sound human; no generic openers like "I hope this email finds you well"
+- Mention ONE specific, relevant thing about the company or role
+- Connect ONE concrete skill of the applicant to the role
+- Clear ask: a 15-minute call or a look at the application
+- Sign off with the applicant's name (and links if provided)
 
 Output format — EXACTLY:
 SUBJECT: <subject line>
 <body, no prefix>"""
 
-    try:
-        response = await chat(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=600,
+
+async def _draft_email(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    email = (args.get("contact_email") or "").strip()
+    company = (args.get("company") or "").strip()
+    role = (args.get("role") or "").strip()
+    if not (email and company and role):
+        return ToolResult(
+            tool=ToolName.DRAFT_EMAIL, ok=False, error="contact_email, company and role are required"
         )
-    except LLMProviderError as exc:
+    source = ctx.known_contacts.get(email.lower())
+    if source is None:
         return ToolResult(
             tool=ToolName.DRAFT_EMAIL,
             ok=False,
-            error=f"Draft generation failed: {exc}",
+            error=(
+                f"Refused: {email} was not returned by any tool in this run. "
+                "Use an application_email from db_search_opportunities or an "
+                "email from crustdata_person_enrich. Never invent addresses."
+            ),
         )
 
-    text = (response.content or "").strip()
-    subject = f"Re: {args['role']} at {args['company']}"
-    body = text
-    for i, line in enumerate(text.splitlines()):
-        if line.upper().startswith("SUBJECT:"):
-            subject = line.split(":", 1)[1].strip()
-            body = "\n".join(text.splitlines()[i + 1:]).strip()
-            break
+    prompt = f"""Write a cold outreach email from a job seeker.
 
+APPLICANT:
+{applicant_profile_block(ctx.user)}
+
+RECIPIENT:
+- Name: {args.get('contact_name') or 'unknown (address them by team, not "Dear Sir")'}
+- Title: {args.get('contact_title') or 'unknown'}
+- Company: {company}
+
+OPPORTUNITY: {role}
+CONTEXT: {args.get('context') or 'none'}
+
+{DRAFT_RULES}"""
+
+    try:
+        response = await chat(
+            messages=[{"role": "user", "content": prompt}], temperature=0.7, max_tokens=600
+        )
+    except LLMProviderError as exc:
+        return ToolResult(tool=ToolName.DRAFT_EMAIL, ok=False, error=f"Draft generation failed: {exc}")
+
+    subject, body = _parse_draft(response.content or "", f"{role} at {company}")
+    if not body:
+        return ToolResult(tool=ToolName.DRAFT_EMAIL, ok=False, error="Model returned an empty draft")
+
+    opportunity = ctx.seen_opportunities.get(str(args.get("opportunity_id") or ""))
+    ctx.last_draft = {
+        "recipient_email": email,
+        "recipient_name": args.get("contact_name"),
+        "contact_title": args.get("contact_title"),
+        "contact_linkedin": args.get("contact_linkedin"),
+        "contact_source": source,
+        "company": company,
+        "role": role,
+        "opportunity_id": opportunity["id"] if opportunity else None,
+        "opportunity_url": opportunity["url"] if opportunity else None,
+        "subject": subject,
+        "body": body,
+    }
     return ToolResult(
         tool=ToolName.DRAFT_EMAIL,
         ok=True,
         data={
             "subject": subject,
             "body": body,
-            "recipient_email": args["contact_email"],
+            "recipient_email": email,
             "recipient_name": args.get("contact_name"),
-            "provider": response.provider,
-            "model": response.model,
+            "contact_source": source.value,
+            "model": f"{response.provider}/{response.model}",
         },
     )
 
 
 async def _request_approval(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    draft = ctx.last_draft
+    if draft is None:
+        return ToolResult(
+            tool=ToolName.REQUEST_APPROVAL, ok=False, error="No draft yet — call draft_email first"
+        )
+
+    lead_id: UUID | None = None
+    if ctx.session is not None:
+        lead = OutreachLead(
+            id=uuid4(),
+            user_id=ctx.user.id,
+            run_id=ctx.run_id,
+            contact_name=draft["recipient_name"],
+            contact_title=draft["contact_title"],
+            contact_email=draft["recipient_email"],
+            contact_linkedin=draft["contact_linkedin"],
+            contact_source=draft["contact_source"].value,
+            status=OutreachStatus.PENDING_APPROVAL.value,
+            email_subject=draft["subject"],
+            email_draft=draft["body"],
+            credit_cost=ctx.credits_used,
+        )
+        if draft["opportunity_id"]:
+            lead.opportunity_id = UUID(draft["opportunity_id"])
+        ctx.session.add(lead)
+        await ctx.session.commit()
+        lead_id = lead.id
+    ctx.lead_id = lead_id
+
     approval = ApprovalRequest(
         run_id=ctx.run_id,
         step_index=int(args.get("_step_index", 0)),
-        recipient_email=args["recipient_email"],
-        recipient_name=args.get("recipient_name"),
-        subject=args["subject"],
-        body=args["body"],
+        recipient_email=draft["recipient_email"],
+        recipient_name=draft["recipient_name"],
+        contact_title=draft["contact_title"],
+        contact_source=draft["contact_source"],
+        company=draft["company"],
+        role=draft["role"],
+        opportunity_url=draft["opportunity_url"],
+        subject=draft["subject"],
+        body=draft["body"],
+        lead_id=lead_id,
     )
     ctx.pending_approval = approval
     return ToolResult(
@@ -410,37 +500,30 @@ async def _request_approval(args: dict[str, Any], ctx: ToolContext) -> ToolResul
     )
 
 
+async def update_lead(ctx: ToolContext, **values: Any) -> None:
+    """Best-effort update of this run's lead row. Never raises."""
+    if ctx.session is None or ctx.lead_id is None:
+        return
+    try:
+        await ctx.session.execute(
+            sa_update(OutreachLead).where(OutreachLead.id == ctx.lead_id).values(**values)
+        )
+        await ctx.session.commit()
+    except Exception as exc:
+        logger.warning("lead_update_failed", extra={"run_id": str(ctx.run_id), "error": str(exc)})
+        try:
+            await ctx.session.rollback()
+        except Exception:
+            pass
+
+
 async def _send_email(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """Called by the orchestrator only, with the human-approved payload."""
+    final = {"email_subject": args["subject"], "email_draft": args["body"]}
     if ctx.dry_run:
-        # Advance the corresponding lead to 'sent' so the UI reflects reality.
-        # In dry-run, we simulate the email but still mark the DB truthfully.
-        from datetime import datetime, timezone
-        from sqlalchemy import update as sa_update
-
-        if ctx.session is not None:
-            try:
-                stmt = (
-                    sa_update(OutreachLead)
-                    .where(
-                        OutreachLead.run_id == ctx.run_id,
-                        OutreachLead.contact_email == args["recipient_email"],
-                        OutreachLead.status == OutreachStatus.PENDING_APPROVAL.value,
-                    )
-                    .values(
-                        status=OutreachStatus.SENT.value,
-                        sent_at=datetime.now(timezone.utc),
-                    )
-                )
-                await ctx.session.execute(stmt)
-                await ctx.session.commit()
-            except Exception as exc:
-                # DB write failure should not cascade into "email failed" —
-                # the send action itself (dry-run simulated) succeeded.
-                logger.warning(
-                    "send_email_lead_update_failed",
-                    extra={"run_id": str(ctx.run_id), "error": str(exc)},
-                )
-
+        await update_lead(
+            ctx, status=OutreachStatus.SENT.value, sent_at=datetime.now(timezone.utc), **final
+        )
         return ToolResult(
             tool=ToolName.SEND_EMAIL,
             ok=True,
@@ -448,44 +531,12 @@ async def _send_email(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
                 "sent": True,
                 "dry_run": True,
                 "recipient": args["recipient_email"],
-                "note": "Simulated — Gmail integration runs only in live mode; "
-                        "lead status advanced to 'sent'",
+                "note": "Demo mode: delivery simulated, nothing left your machine. Lead marked sent.",
             },
         )
-    return ToolResult(
-        tool=ToolName.SEND_EMAIL,
-        ok=False,
-        error="Live email sending not configured (Gmail OAuth not yet wired)",
-    )
-
-
-async def _save_lead(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
-    lead = OutreachLead(
-        user_id=ctx.user.id,
-        run_id=ctx.run_id,
-        contact_name=args.get("contact_name"),
-        contact_title=args.get("contact_title"),
-        contact_email=args.get("contact_email"),
-        contact_linkedin=args.get("contact_linkedin"),
-        contact_source=args.get("contact_source", "agent"),
-        status=OutreachStatus.PENDING_APPROVAL.value,
-        email_subject=args.get("email_subject"),
-        email_draft=args.get("email_draft"),
-        credit_cost=ctx.credits_used,
-    )
-    if args.get("opportunity_id"):
-        try:
-            lead.opportunity_id = UUID(args["opportunity_id"])
-        except (ValueError, TypeError):
-            pass
-    ctx.session.add(lead)
-    await ctx.session.commit()
-    ctx.collected_leads.append({"id": str(lead.id), **args})
-    return ToolResult(
-        tool=ToolName.SAVE_LEAD,
-        ok=True,
-        data={"lead_id": str(lead.id)},
-    )
+    error = "Live email delivery is not configured (Gmail OAuth not wired). Nothing was sent."
+    await update_lead(ctx, status=OutreachStatus.FAILED.value, error_message=error, **final)
+    return ToolResult(tool=ToolName.SEND_EMAIL, ok=False, error=error)
 
 
 # ---------------------------------------------------------------------------
@@ -499,34 +550,22 @@ _DISPATCH = {
     ToolName.DRAFT_EMAIL: _draft_email,
     ToolName.REQUEST_APPROVAL: _request_approval,
     ToolName.SEND_EMAIL: _send_email,
-    ToolName.SAVE_LEAD: _save_lead,
 }
 
+LLM_CALLABLE_TOOLS = frozenset(s["function"]["name"] for s in TOOL_SCHEMAS)
 
-async def execute_tool(
-    name: str | ToolName, args: dict[str, Any], ctx: ToolContext
-) -> ToolResult:
-    """Execute a tool by name. Never raises — always returns a ToolResult.
 
-    Accepts a raw string (what an LLM might hallucinate) and normalizes
-    to ToolName. Invalid names produce an ok=False result rather than a
-    validation error, so callers can log the bad input verbatim.
-    """
+async def execute_tool(name: str | ToolName, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+    """Execute a tool by name. Never raises — always returns a ToolResult."""
     try:
         tool_name = name if isinstance(name, ToolName) else ToolName(name)
     except (ValueError, TypeError):
-        return ToolResult(
-            tool=str(name),
-            ok=False,
-            error=f"Unknown tool: {name!r}",
-        )
+        return ToolResult(tool=str(name), ok=False, error=f"Unknown tool: {name!r}")
 
     handler = _DISPATCH.get(tool_name)
     if handler is None:
-        # Enum value exists but no handler registered — a code bug we must surface
         return ToolResult(
-            tool=tool_name.value,
-            ok=False,
+            tool=tool_name.value, ok=False,
             error=f"Tool not registered in dispatch table: {tool_name.value}",
         )
 
@@ -535,9 +574,7 @@ async def execute_tool(
         result = await handler(args, ctx)
     except Exception as exc:
         logger.exception("tool_crashed", extra={"tool": tool_name.value})
-        result = ToolResult(
-            tool=tool_name.value, ok=False, error=f"Tool crashed: {exc}"
-        )
+        result = ToolResult(tool=tool_name.value, ok=False, error=f"Tool crashed: {exc}")
     result.duration_ms = int((time.monotonic() - start) * 1000)
     return result
 

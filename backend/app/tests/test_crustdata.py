@@ -1,4 +1,4 @@
-﻿"""Tests for the Crustdata adapter.
+"""Tests for the Crustdata adapter.
 
 All tests use dry_run=True — no credits spent, no network calls.
 Each test uses a *unique* query string so the Redis cache never causes
@@ -87,7 +87,7 @@ async def test_person_enrich_dry_run():
     try:
         url = f"https://linkedin.com/in/test-{uuid.uuid4().hex[:8]}"
         result = await c.person_enrich(url)
-        assert result["email"] == "mock.contact@example.com"
+        assert result["email"].endswith("@example.com")  # reserved domain: never a real person
         assert result["linkedin_url"] == url
         assert c.credits_used == pytest.approx(CREDIT_COSTS["person_enrich"])
     finally:
@@ -103,5 +103,25 @@ async def test_job_search_dry_run():
         assert c.credits_used == pytest.approx(
             4 * CREDIT_COSTS["job_search"]
         )
+    finally:
+        await c.close()
+
+
+def test_dry_run_and_live_cache_keys_never_collide():
+    args = {"title": "Recruiter", "company": "Acme", "location": None, "limit": 3}
+    dry = CrustdataClient(dry_run=True)._cache_key("person_search", args)
+    live = CrustdataClient(dry_run=False)._cache_key("person_search", args)
+    assert dry != live
+
+
+@pytest.mark.asyncio
+async def test_dry_run_enrich_returns_same_person_as_search():
+    c = CrustdataClient(dry_run=True, credit_budget=10.0)
+    try:
+        people = await c.person_search(_unique("Recruiter"), company="Pinterest", limit=1)
+        profile = await c.person_enrich(people[0]["linkedin_url"])
+        assert profile["name"] == people[0]["name"]
+        assert profile["company"] == "Pinterest"
+        assert profile["email"].endswith("@example.com")
     finally:
         await c.close()

@@ -117,32 +117,52 @@ def _normalize_job_search(raw: dict[str, Any]) -> list[dict[str, Any]]:
 
 # --- Deterministic mock data for dry_run ---
 
+# Placeholder people for dry-run. Emails use the reserved example.com domain and
+# the UI labels these contacts "Simulated contact" — never presented as real.
+_MOCK_NAMES = ["Jordan Lee", "Priya Shah", "Sam Ortiz", "Maya Chen", "Daniel Okafor"]
+# linkedin_url -> mock person, so enrich returns the same person search found
+_MOCK_PEOPLE: dict[str, dict[str, Any]] = {}
+
+
+def _slug(text: str) -> str:
+    return "".join(ch if ch.isalnum() else "-" for ch in text.lower()).strip("-")
+
+
 def _mock_person_search(title: str, company: str | None, limit: int) -> list[dict[str, Any]]:
     n = max(1, min(limit, 5))
-    return [
-        {
-            "name": f"Mock Contact {i + 1}",
+    company = company or "Example Co"
+    people = []
+    for i in range(n):
+        name = _MOCK_NAMES[i]
+        url = f"https://linkedin.com/in/sample-{_slug(name)}-{_slug(company)}"
+        person = {
+            "name": name,
             "title": title,
-            "company": company or "Mock Company",
+            "company": company,
             "location": "Remote",
-            "linkedin_url": f"https://linkedin.com/in/mock-{title.lower().replace(' ', '-')}-{i + 1}",
+            "linkedin_url": url,
             "has_business_email": True,
             "has_personal_email": False,
         }
-        for i in range(n)
-    ]
+        _MOCK_PEOPLE[url] = person
+        people.append(person)
+    return people
 
 
 def _mock_person_enrich(linkedin_url: str) -> dict[str, Any]:
+    person = _MOCK_PEOPLE.get(linkedin_url) or {
+        "name": _MOCK_NAMES[0], "title": "Engineering Manager", "company": "Example Co",
+    }
+    first, last = person["name"].lower().split(" ", 1)
     return {
-        "name": "Mock Contact",
-        "title": "Engineering Manager",
-        "company": "Mock Company",
+        "name": person["name"],
+        "title": person["title"],
+        "company": person["company"],
         "location": "Remote",
         "linkedin_url": linkedin_url,
-        "email": "mock.contact@example.com",
+        "email": f"{first}.{last}@example.com",
         "phone": None,
-        "headline": "Engineering leader at a fast-growing startup",
+        "headline": f"{person['title']} at {person['company']}",
     }
 
 
@@ -223,11 +243,12 @@ class CrustdataClient:
             )
         self._credits_used += estimated
 
-    @staticmethod
-    def _cache_key(method: str, args: dict[str, Any]) -> str:
+    def _cache_key(self, method: str, args: dict[str, Any]) -> str:
+        # Separate namespaces so simulated (dry-run) results never satisfy a live lookup.
         payload = json.dumps(args, sort_keys=True, default=str).encode()
         digest = hashlib.sha256(payload).hexdigest()
-        return f"crustdata:{method}:{digest}"
+        mode = "dry" if self._dry_run else "live"
+        return f"crustdata:{mode}:{method}:{digest}"
 
     async def _cache_get(self, key: str) -> Any | None:
         try:

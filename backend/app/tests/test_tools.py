@@ -10,9 +10,13 @@ from uuid import uuid4
 
 import pytest
 
-from app.agents.schemas import ToolName
+from app.agents.schemas import ContactSource, ToolName
 from app.agents.tools import (
+    LLM_CALLABLE_TOOLS,
     TOOL_SCHEMAS,
+    _application_email,
+    _score_opportunity,
+    _search_terms,
     ToolContext,
     execute_tool,
     tool_schemas_for_llm,
@@ -43,8 +47,12 @@ def _ctx(dry_run: bool = True) -> ToolContext:
 def test_tool_schemas_are_unique_and_complete():
     names = [s["function"]["name"] for s in TOOL_SCHEMAS]
     assert len(names) == len(set(names)), "duplicate tool name in schemas"
-    assert len(names) == 7, f"expected 7 tools, got {len(names)}"
-    assert set(names) == {t.value for t in ToolName}
+    # Every tool except send_email is offered to the LLM.
+    assert set(names) == {t.value for t in ToolName} - {ToolName.SEND_EMAIL.value}
+
+
+def test_send_email_is_never_offered_to_llm():
+    assert ToolName.SEND_EMAIL.value not in LLM_CALLABLE_TOOLS
 
 
 def test_tool_schemas_for_llm_returns_same_list():
@@ -52,26 +60,70 @@ def test_tool_schemas_for_llm_returns_same_list():
 
 
 @pytest.mark.asyncio
-async def test_request_approval_sets_pending():
+async def test_request_approval_requires_a_draft():
+    ctx = _ctx()
+    result = await execute_tool(ToolName.REQUEST_APPROVAL, {}, ctx)
+    assert result.ok is False
+    assert ctx.pending_approval is None
+
+
+@pytest.mark.asyncio
+async def test_request_approval_uses_exact_draft():
+    ctx = _ctx()
+    ctx.last_draft = {
+        "recipient_email": "hiring@company.com",
+        "recipient_name": "Hiring Manager",
+        "contact_title": "EM",
+        "contact_linkedin": None,
+        "contact_source": ContactSource.JOB_POSTING,
+        "company": "Acme",
+        "role": "ML Intern",
+        "opportunity_id": None,
+        "opportunity_url": None,
+        "subject": "Quick question",
+        "body": "Hello...",
+    }
+    result = await execute_tool(ToolName.REQUEST_APPROVAL, {"_step_index": 3}, ctx)
+    assert result.ok is True
+    req = result.data["approval_request"]
+    assert req["step_index"] == 3
+    assert req["recipient_email"] == "hiring@company.com"
+    assert req["body"] == "Hello..."
+    assert req["contact_source"] == "job_posting"
+    assert ctx.pending_approval is not None
+
+
+@pytest.mark.asyncio
+async def test_draft_email_refuses_unknown_recipient():
+    """An address no tool returned (hallucinated) is refused before any LLM call."""
     ctx = _ctx()
     result = await execute_tool(
-        ToolName.REQUEST_APPROVAL,
-        {
-            "recipient_email": "hiring@company.com",
-            "recipient_name": "Hiring Manager",
-            "subject": "Quick question",
-            "body": "Hello...",
-            "_step_index": 3,
-        },
+        ToolName.DRAFT_EMAIL,
+        {"contact_email": "made.up@nowhere.com", "company": "Acme", "role": "Intern"},
         ctx,
     )
-    assert result.ok is True
-    assert result.data is not None
-    assert "approval_request" in result.data
-    assert result.data["approval_request"]["step_index"] == 3
-    assert result.data["approval_request"]["recipient_email"] == "hiring@company.com"
-    assert ctx.pending_approval is not None
-    assert ctx.pending_approval.recipient_email == "hiring@company.com"
+    assert result.ok is False
+    assert "not returned by any tool" in (result.error or "")
+
+
+def test_search_terms_tokenizes_and_expands():
+    terms = _search_terms("Find an ML internship")
+    assert "ml" in terms and "machine learning" in terms and "internship" in terms
+    assert "find" not in terms and "an" not in terms
+
+
+def test_score_prefers_title_and_whole_words():
+    terms = _search_terms("ml intern")
+    assert _score_opportunity(terms, "Machine Learning Intern", "") > _score_opportunity(
+        terms, "Frontend Engineer", "Acme, internship program"
+    )
+    # 'ml' must not match inside 'html'
+    assert _score_opportunity(["ml"], "HTML Developer", "") == 0
+
+
+def test_application_email_parsed_from_tags():
+    assert _application_email("Internship,email:jobs@acme.io") == "jobs@acme.io"
+    assert _application_email("Internship") is None
 
 
 @pytest.mark.asyncio

@@ -37,8 +37,15 @@ class ToolName(str, Enum):
     CRUSTDATA_PERSON_ENRICH = "crustdata_person_enrich"
     DRAFT_EMAIL = "draft_email"
     REQUEST_APPROVAL = "request_approval"
+    # Executed by the orchestrator after human approval — never offered to the LLM.
     SEND_EMAIL = "send_email"
-    SAVE_LEAD = "save_lead"
+
+
+class ContactSource(str, Enum):
+    """Where a recipient email came from. Shown to the user as attribution."""
+    JOB_POSTING = "job_posting"                  # application email listed on the posting
+    CRUSTDATA = "crustdata"                      # live Crustdata enrichment
+    CRUSTDATA_SIMULATED = "crustdata_simulated"  # Crustdata dry-run mock data
 
 
 class CreditEventType(str, Enum):
@@ -81,7 +88,7 @@ class AgentStep(BaseModel):
 class AgentGoal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str = Field(min_length=5, max_length=1000)
-    max_steps: int = Field(default=8, ge=1, le=20)
+    max_steps: int = Field(default=10, ge=1, le=20)
     credit_budget: float = Field(default=50.0, ge=0.0, le=500.0)
     dry_run: bool = Field(default=True)
 
@@ -113,6 +120,11 @@ class ApprovalRequest(BaseModel):
     kind: Literal["email_send"] = "email_send"
     recipient_email: str
     recipient_name: str | None = None
+    contact_title: str | None = None
+    contact_source: ContactSource | None = None
+    company: str | None = None
+    role: str | None = None
+    opportunity_url: str | None = None
     subject: str
     body: str
     lead_id: UUID | None = None

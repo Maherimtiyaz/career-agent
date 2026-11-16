@@ -50,7 +50,7 @@ class Scenario(BaseModel):
     id: int
     name: str
     prompt: str
-    max_steps: int = 8
+    max_steps: int = 10
     credit_budget: float = 20.0
     # None = do not interact with approval (just observe where it stops)
     # True = approve, False = reject
