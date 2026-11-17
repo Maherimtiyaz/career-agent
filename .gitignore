@@ -19,3 +19,6 @@ backend/data/fastembed_cache/
 # Next.js generated
 frontend/next-env.d.ts
 *.tsbuildinfo
+
+# Demo video (shared directly, too large for git)
+submission/*.mp4

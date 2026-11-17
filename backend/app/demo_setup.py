@@ -1,17 +1,20 @@
 """One-command demo setup: demo user with a complete profile + seeded opportunities.
 
     docker compose exec backend python -m app.demo_setup
+    docker compose exec backend python -m app.demo_setup --reset-leads   # clean history before a demo
 
 Idempotent: re-running refreshes the demo profile and skips seeding when
 opportunities already exist.
 """
 import asyncio
+import sys
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal
 from app.models.opportunity import Opportunity
+from app.models.outreach_lead import OutreachLead
 from app.models.user import User
 
 DEMO_EMAIL = "demo@example.com"
@@ -46,6 +49,11 @@ async def main() -> None:
             setattr(user, key, value)
         await db.commit()
         print(f"Demo user ready: {DEMO_EMAIL} / {DEMO_PASSWORD}")
+
+        if "--reset-leads" in sys.argv:
+            result = await db.execute(delete(OutreachLead).where(OutreachLead.user_id == user.id))
+            await db.commit()
+            print(f"Cleared {result.rowcount} outreach leads for the demo user.")
 
         count = (await db.execute(select(func.count()).select_from(Opportunity))).scalar_one()
     if count:

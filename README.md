@@ -4,6 +4,12 @@
 
 Job seekers lose hours on three jobs: finding a role that fits, figuring out *who* to email, and rewriting the same cold message. Career Agent does all three in about a minute. It shows every step it takes, and it cannot send anything on its own.
 
+![Agent trace and result](submission/screenshots/06-trace-and-result.png)
+
+| Human approval (editable draft) | Sent + outreach history |
+|---|---|
+| ![Approval card](submission/screenshots/08-approval-edited.png) | ![Sent](submission/screenshots/09-sent.png) |
+
 ---
 
 ## The user journey

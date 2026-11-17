@@ -392,8 +392,8 @@ export default function AgentPage() {
                   <span className="agent-fact-sub">
                     {finalEmail.company}
                     {finalEmail.opportunity_url && (
-                      <a className="text-link" href={finalEmail.opportunity_url} target="_blank" rel="noreferrer">
-                        {" "}View posting <ExternalLink size={11} />
+                      <a className="text-link agent-posting-link" href={finalEmail.opportunity_url} target="_blank" rel="noreferrer">
+                        View posting <ExternalLink size={11} />
                       </a>
                     )}
                   </span>
